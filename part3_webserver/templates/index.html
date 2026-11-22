@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cổng Dịch Vụ Ngân Hàng Trực Tuyến - DIGIBANK</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f4f6f9;
+            color: #2c3e50;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .navbar-brand {
+            font-weight: 800;
+            font-size: 22px;
+            color: #0d6efd !important;
+            letter-spacing: -0.5px;
+        }
+        .hero-section {
+            background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+            color: white;
+            padding: 50px 0;
+            margin-bottom: 40px;
+        }
+        .service-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 28px 24px;
+            height: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        }
+        .service-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .service-icon {
+            font-size: 38px;
+            margin-bottom: 16px;
+            display: inline-block;
+        }
+        .section-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            color: #0f172a;
+        }
+        .form-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        }
+        footer {
+            background-color: #0f172a;
+            color: #94a3b8;
+            padding: 30px 0;
+            margin-top: 60px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3">
+        <div class="container">
+            <a class="navbar-brand" href="/">🏦 DIGIBANK ONLINE</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto gap-3">
+                    <li class="nav-item"><a class="nav-link active fw-semibold" href="/">Trang Chủ</a></li>
+                    <li class="nav-item"><a class="nav-link fw-semibold" href="/service/statement">Sao Kê Tài Khoản</a></li>
+                    <li class="nav-item"><a class="nav-link fw-semibold" href="/service/transfer">Chuyển Tiền</a></li>
+                    <li class="nav-item"><a class="nav-link fw-semibold" href="/service/loan">Khoản Vay</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Banner -->
+    <section class="hero-section">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-lg-8">
+                    <h1 class="display-6 fw-bold mb-3">Cổng Dịch Vụ Tài Chính Trực Tuyến</h1>
+                    <p class="lead mb-0 text-light opacity-90">Hệ thống giao dịch số xử lý trực tuyến 24/7. Vui lòng lựa chọn các dịch vụ bên dưới để thực hiện giao dịch.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Services -->
+    <main class="container">
+        <h2 class="section-title">Danh Mục Dịch Vụ Khách Hàng</h2>
+        
+        <div class="row g-4 mb-5">
+            <!-- Service 1: Statement -->
+            <div class="col-md-4">
+                <div class="service-card d-flex flex-column justify-content-between">
+                    <div>
+                        <div class="service-icon">💳</div>
+                        <h4 class="fw-bold mb-2">Sao Kê & Số Dư</h4>
+                        <p class="text-muted">Tra cứu số dư khả dụng, kết xuất biến động số dư và sao kê các giao dịch tài chính gần nhất.</p>
+                    </div>
+                    <a href="/service/statement" class="btn btn-primary w-100 py-2 fw-semibold mt-3">
+                        Thực Hiện Tra Cứu
+                    </a>
+                </div>
+            </div>
+
+            <!-- Service 2: Transfer -->
+            <div class="col-md-4">
+                <div class="service-card d-flex flex-column justify-content-between">
+                    <div>
+                        <div class="service-icon">⚡</div>
+                        <h4 class="fw-bold mb-2">Chuyển Tiền Nhanh 24/7</h4>
+                        <p class="text-muted">Chuyển tiền liên ngân hàng tức thời qua số tài khoản hoặc số thẻ, miễn phí xử lý mọi khung giờ.</p>
+                    </div>
+                    <a href="/service/transfer" class="btn btn-success w-100 py-2 fw-semibold mt-3">
+                        Khởi Tạo Giao Dịch
+                    </a>
+                </div>
+            </div>
+
+            <!-- Service 3: Loan -->
+            <div class="col-md-4">
+                <div class="service-card d-flex flex-column justify-content-between">
+                    <div>
+                        <div class="service-icon">📄</div>
+                        <h4 class="fw-bold mb-2">Khoản Vay & Tín Dụng</h4>
+                        <p class="text-muted">Thẩm định hồ sơ vay tiêu dùng tự động lên đến 300 triệu đồng, giải ngân trực tiếp vào tài khoản.</p>
+                    </div>
+                    <a href="/service/loan" class="btn btn-dark w-100 py-2 fw-semibold mt-3">
+                        Đăng Ký Khoản Vay
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Operations (Login & Feedback) -->
+        <div class="row g-4">
+            <!-- Form Đăng nhập Internet Banking -->
+            <div class="col-md-6">
+                <div class="form-card h-100">
+                    <h5 class="fw-bold mb-3">🔐 Đăng Nhập Khách Hàng</h5>
+                    <form action="/api/login" method="GET">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Tên đăng nhập / Số tài khoản</label>
+                            <input type="text" name="user" class="form-control" placeholder="Nhập tài khoản (vd: admin)" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Mật khẩu</label>
+                            <input type="password" name="pass" class="form-control" placeholder="Nhập mật khẩu" required>
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary w-100 fw-semibold">Đăng Nhập Hệ Thống</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Form Khảo sát ý kiến đóng góp -->
+            <div class="col-md-6">
+                <div class="form-card h-100">
+                    <h5 class="fw-bold mb-3">💬 Ý Kiến Đóng Góp & Phản Hồi</h5>
+                    <form action="/api/comment" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Họ và tên khách hàng</label>
+                            <input type="text" name="author" class="form-control" placeholder="Họ tên của bạn" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Nội dung phản hồi dịch vụ</label>
+                            <textarea name="content" class="form-control" rows="2" placeholder="Cảm nhận của quý khách về dịch vụ..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-outline-secondary w-100 fw-semibold">Gửi Đánh Giá</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container text-center">
+            <p class="mb-1">© 2026 Cổng Dịch Vụ Ngân Hàng Trực Tuyến - DIGIBANK. Mọi quyền được bảo lưu.</p>
+            <p class="mb-0 small text-secondary">Hệ thống đạt chuẩn an toàn bảo mật tài chính quốc tế PCI-DSS.</p>
+        </div>
+    </footer>
+
+</body>
+</html>

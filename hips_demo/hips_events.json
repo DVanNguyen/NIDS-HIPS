@@ -1,0 +1,1 @@
+{"rule_id": "HIPS_SQLI_001", "category": "SQL_INJECTION", "severity": "CRITICAL", "action": "BLOCK_AND_ISOLATE_IP", "reason": "Phát hiện kỹ thuật SQL Injection nhằm chiếm đoạt tài khoản hoặc trích xuất Database", "zone": "QUERY", "matched_text": "' OR '1'='1", "client_ip": "1.1.1.1", "method": "GET", "path": "/api/login", "timestamp": "2026-09-29 14:08:40"}

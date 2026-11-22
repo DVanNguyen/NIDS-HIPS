@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network IDS - Real-time Observable Dashboard</title>
+    <!-- Tailwind CSS CDN & Chart.js -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        @keyframes pulse-red {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-critical {
+            animation: pulse-red 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .highlight-threat {
+            background-color: #ef4444;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col">
+
+    <!-- Top Navigation -->
+    <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="h-3 w-3 rounded-full bg-emerald-500 animate-ping"></div>
+            <div>
+                <h1 class="text-xl font-bold tracking-wider text-emerald-400">NIDS OBSERVABLE MONITOR</h1>
+                <p class="text-xs text-slate-400">Kiến trúc Đa luồng Producer–Consumer • Phân tích TCP/IP & HTTP</p>
+            </div>
+        <div class="flex items-center gap-3">
+            <a href="/architecture" target="_blank" class="bg-cyan-950/90 hover:bg-cyan-900 text-cyan-300 hover:text-white px-3.5 py-1.5 rounded-lg border border-cyan-700/80 transition text-xs font-semibold flex items-center gap-1.5 shadow">
+                <span>⚡</span> Sơ Đồ Pipeline
+            </a>
+            <div class="bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700">
+                <span class="text-slate-400">Tốc độ: </span>
+                <span id="metric-pps" class="font-mono text-emerald-400 font-bold">0</span> <span class="text-xs">gói/s</span>
+            </div>
+            <div class="bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700">
+                <span class="text-slate-400">Đã xử lý: </span>
+                <span id="metric-processed" class="font-mono text-cyan-400 font-bold">0</span>
+            </div>
+            <div class="bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700">
+                <span class="text-slate-400">Rớt gói: </span>
+                <span id="metric-dropped" class="font-mono text-rose-400 font-bold">0</span>
+            </div>
+            <div class="bg-slate-800/80 px-4 py-2 rounded-lg border border-slate-700">
+                <span class="text-slate-400">Cảnh báo: </span>
+                <span id="metric-alerts" class="font-mono text-amber-400 font-bold">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Column 1: Architecture Telemetry & Traffic Chart -->
+        <div class="space-y-6 lg:col-span-1">
+            <!-- Producer-Consumer Queue Meter -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300">Bộ đệm Hàng đợi (Queue Buffer)</h2>
+                    <span id="queue-ratio" class="text-xs font-mono text-emerald-400 font-semibold">0 / 10000 (0%)</span>
+                </div>
+                <!-- Progress bar -->
+                <div class="w-full bg-slate-800 rounded-full h-4 overflow-hidden border border-slate-700">
+                    <div id="queue-bar" class="bg-emerald-500 h-full transition-all duration-300 ease-out" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-slate-500 mt-2">
+                    <span>Producer: Sniffer / Replay</span>
+                    <span>Buffer trượt</span>
+                    <span>Consumer: 4 Luồng Worker</span>
+                </div>
+            </div>
+
+            <!-- Real-time Traffic Line Chart -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-4">Lưu lượng Gói tin Thời gian thực (PPS)</h2>
+                <div class="h-56">
+                    <canvas id="ppsChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Severity Distribution Doughnut Chart -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-300 mb-4">Phân bố Mức độ Nguy hiểm</h2>
+                <div class="h-44 flex items-center justify-center">
+                    <canvas id="severityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Column 2 & 3: Live Observable Alert Feed & Evidence Inspector -->
+        <div class="space-y-6 lg:col-span-2 flex flex-col">
+            
+            <!-- Live Alert Stream Table -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex-1 flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-200">Dòng Cảnh Báo Phát Hiện Thời Gian Thực (Live Alert Stream)</h2>
+                        <p class="text-xs text-slate-400">Click vào dòng cảnh báo để kiểm tra bằng chứng phân tích Layer-7</p>
+                    </div>
+                    <button onclick="clearAlertsUI()" class="text-xs px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">
+                        Xóa bảng
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto flex-1 max-h-[360px] overflow-y-auto border border-slate-800 rounded-lg">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-800/80 text-slate-400 uppercase sticky top-0">
+                            <tr>
+                                <th class="p-3">Thời gian</th>
+                                <th class="p-3">Mức độ</th>
+                                <th class="p-3">Hướng</th>
+                                <th class="p-3">Loại Tấn Công</th>
+                                <th class="p-3">Nguồn ➔ Đích</th>
+                                <th class="p-3">Bằng chứng (Evidence Slice)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alert-tbody" class="divide-y divide-slate-800/60 font-mono">
+                            <!-- Populated dynamically via WebSocket -->
+                            <tr id="empty-row" class="text-slate-500 text-center">
+                                <td colspan="6" class="py-12">Chưa ghi nhận cuộc tấn công nào. Hệ thống đang lắng nghe...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Evidence Inspector Modal/Box -->
+            <div id="inspector-box" class="bg-slate-900 border border-emerald-500/40 rounded-xl p-5 shadow-2xl">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-emerald-400 text-base font-bold">🔍 KÍNH LÚP BẰNG CHỨNG (PAYLOAD INSPECTOR)</span>
+                        <span id="inspect-rule-id" class="px-2 py-0.5 bg-slate-800 text-cyan-400 rounded text-xs font-mono font-bold">--</span>
+                    </div>
+                    <span id="inspect-category" class="text-xs font-bold text-amber-400">--</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs mb-3">
+                    <div><span class="text-slate-500">Tên luật:</span> <span id="inspect-rule-name" class="text-slate-200 font-semibold">Chưa chọn</span></div>
+                    <div><span class="text-slate-500">Luồng:</span> <span id="inspect-flow" class="text-slate-200 font-mono">--</span></div>
+                    <div><span class="text-slate-500">Giao thức:</span> <span id="inspect-proto" class="text-slate-200 font-mono">--</span></div>
+                    <div><span class="text-slate-500">Phạm vi:</span> <span id="inspect-dir" class="text-slate-200 font-mono font-bold">--</span></div>
+                </div>
+
+                <div>
+                    <label class="text-xs text-slate-400 block mb-1">Mẫu bóc tách & Chuỗi payload bị bắt trúng (Highlighted):</label>
+                    <div id="inspect-payload" class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 break-all max-h-32 overflow-y-auto">
+                        Chọn một cảnh báo ở bảng trên để xem chi tiết bóc tách giao thức...
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <footer class="bg-slate-900/80 border-t border-slate-800 px-6 py-3 text-xs text-slate-500 flex justify-between items-center">
+        <span>Network Intrusion Detection System • Đồ án Tốt nghiệp / Cuối kỳ</span>
+        <span class="font-mono">Engine: Multi-threaded Python & Scapy</span>
+    </footer>
+
+    <script>
+        // Initialize Socket.io
+        const socket = io();
+
+        // PPS Chart Setup
+        const ctxPPS = document.getElementById('ppsChart').getContext('2d');
+        const ppsData = {
+            labels: Array(20).fill(''),
+            datasets: [{
+                label: 'Packets / Giây',
+                data: Array(20).fill(0),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                borderWidth: 2,
+                tension: 0.3,
+                fill: true,
+                pointRadius: 2
+            }]
+        };
+        const ppsChart = new Chart(ctxPPS, {
+            type: 'line',
+            data: ppsData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Severity Chart Setup
+        const ctxSev = document.getElementById('severityChart').getContext('2d');
+        const severityChart = new Chart(ctxSev, {
+            type: 'doughnut',
+            data: {
+                labels: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                datasets: [{
+                    data: [0, 0, 0, 0],
+                    backgroundColor: ['#ef4444', '#f97316', '#eab308', '#3b82f6'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } }
+                    }
+                }
+            }
+        });
+
+        // Store alerts locally for inspector lookup
+        const alertCache = new Map();
+
+        // Telemetry Update Listener
+        socket.on('telemetry_update', function(data) {
+            // Update Top Metrics
+            document.getElementById('metric-pps').innerText = data.queue.pps;
+            document.getElementById('metric-processed').innerText = data.queue.total_processed.toLocaleString();
+            document.getElementById('metric-dropped').innerText = data.queue.total_dropped.toLocaleString();
+            document.getElementById('metric-alerts').innerText = data.alerts.total_alerts.toLocaleString();
+
+            // Update Queue Bar
+            const qOccupancy = data.queue.occupancy_percent;
+            const qBar = document.getElementById('queue-bar');
+            qBar.style.width = Math.min(qOccupancy, 100) + '%';
+            document.getElementById('queue-ratio').innerText = `${data.queue.queue_size} / ${data.queue.max_size} (${qOccupancy}%)`;
+
+            if (qOccupancy > 80) {
+                qBar.className = 'bg-rose-500 h-full transition-all duration-300';
+            } else if (qOccupancy > 50) {
+                qBar.className = 'bg-amber-500 h-full transition-all duration-300';
+            } else {
+                qBar.className = 'bg-emerald-500 h-full transition-all duration-300';
+            }
+
+            // Update PPS Chart
+            ppsData.datasets[0].data.push(data.queue.pps);
+            ppsData.datasets[0].data.shift();
+            ppsChart.update('none');
+
+            // Update Severity Chart
+            const sevs = data.alerts.severities;
+            severityChart.data.datasets[0].data = [
+                sevs.CRITICAL || 0,
+                sevs.HIGH || 0,
+                sevs.MEDIUM || 0,
+                sevs.LOW || 0
+            ];
+            severityChart.update('none');
+        });
+
+        // New Alert Listener
+        socket.on('new_alert', function(alert) {
+            alertCache.set(alert.alert_id, alert);
+            const emptyRow = document.getElementById('empty-row');
+            if (emptyRow) emptyRow.remove();
+
+            const tbody = document.getElementById('alert-tbody');
+            const row = document.createElement('tr');
+            row.id = `row-${alert.alert_id}`;
+            row.className = "hover:bg-slate-800/80 cursor-pointer transition border-b border-slate-800/60";
+            row.onclick = () => inspectAlert(alert.alert_id);
+
+            let sevBadge = '';
+            if (alert.severity === 'CRITICAL') {
+                sevBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-800 animate-critical">CRITICAL</span>';
+            } else if (alert.severity === 'HIGH') {
+                sevBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-950 text-orange-400 border border-orange-800">HIGH</span>';
+            } else if (alert.severity === 'MEDIUM') {
+                sevBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400 border border-amber-800">MEDIUM</span>';
+            } else {
+                sevBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950 text-blue-400 border border-blue-800">LOW</span>';
+            }
+
+            let dirBadge = '';
+            const d = alert.direction || 'UNKNOWN';
+            if (d === 'INBOUND') {
+                dirBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-400 border border-cyan-800">INBOUND</span>';
+            } else if (d === 'OUTBOUND') {
+                dirBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">OUTBOUND</span>';
+            } else if (d === 'INTERNAL') {
+                dirBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950 text-purple-400 border border-purple-800">INTERNAL</span>';
+            } else {
+                dirBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">${d}</span>`;
+            }
+
+            const timeStr = alert.timestamp.split('T')[1] || alert.timestamp;
+            const displayEvidence = alert.evidence_slice || alert.evidence;
+
+            row.innerHTML = `
+                <td class="p-3 text-slate-400">${timeStr}</td>
+                <td class="p-3">${sevBadge}</td>
+                <td class="p-3">${dirBadge}</td>
+                <td class="p-3 font-semibold text-slate-200">${alert.category}</td>
+                <td class="p-3 text-slate-300">${alert.src_ip}:${alert.src_port || '*'} ➔ ${alert.dst_ip}:${alert.dst_port || '*'}</td>
+                <td class="p-3 text-amber-300 truncate max-w-xs">${escapeHtml(displayEvidence)}</td>
+            `;
+
+            tbody.insertBefore(row, tbody.firstChild);
+
+            // Automatically select and inspect the newest critical threat
+            if (alert.severity === 'CRITICAL') {
+                inspectAlert(alert.alert_id);
+            }
+        });
+
+        // Inspect Alert Detail Function
+        function inspectAlert(alertId) {
+            const alert = alertCache.get(alertId);
+            if (!alert) return;
+
+            document.getElementById('inspect-rule-id').innerText = alert.rule_id;
+            document.getElementById('inspect-category').innerText = `[${alert.category}] ${alert.severity}`;
+            document.getElementById('inspect-rule-name').innerText = alert.rule_name;
+            document.getElementById('inspect-flow').innerText = `${alert.src_ip}:${alert.src_port || '*'} ➔ ${alert.dst_ip}:${alert.dst_port || '*'}`;
+            document.getElementById('inspect-proto').innerText = alert.protocol;
+            document.getElementById('inspect-dir').innerText = alert.direction || 'UNKNOWN';
+
+            // Highlight the threat evidence inside the sample
+            const payloadBox = document.getElementById('inspect-payload');
+            let rawText = alert.payload_sample || alert.details;
+            let evidence = alert.evidence;
+
+            if (evidence && rawText.includes(evidence)) {
+                let highlighted = escapeHtml(rawText).replace(
+                    escapeHtml(evidence),
+                    `<span class="highlight-threat">${escapeHtml(evidence)}</span>`
+                );
+                payloadBox.innerHTML = highlighted;
+            } else {
+                payloadBox.innerHTML = `<strong>Bằng chứng:</strong> <span class="highlight-threat">${escapeHtml(evidence)}</span><br><br><strong>Chi tiết:</strong> ${escapeHtml(alert.details)}<br><strong>Mẫu:</strong> ${escapeHtml(rawText)}`;
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function clearAlertsUI() {
+            document.getElementById('alert-tbody').innerHTML = `
+                <tr id="empty-row" class="text-slate-500 text-center">
+                    <td colspan="5" class="py-12">Bảng đã được làm trống.</td>
+                </tr>
+            `;
+            alertCache.clear();
+        }
+    </script>
+</body>
+</html>

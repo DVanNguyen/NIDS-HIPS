@@ -1,0 +1,42 @@
+================================================================================
+           HƯỚNG DẪN DÀNH CHO MÁY PHÁT ĐỘNG TẤN CÔNG (ATTACKER)
+================================================================================
+
+1. YÊU CẦU KẾT NỐI MẠNG:
+- Máy phát động tấn công (Attacker) và Máy chủ nạn nhân (Web Server) phải thông mạng.
+- Ví dụ IP máy Web Server: 192.168.144.1 (VMware VMnet8) hoặc 192.168.88.100 (Wi-Fi).
+
+2. HAI HÌNH THỨC SỬ DỤNG:
+
+A. GIAO DIỆN CỬA SỔ DESKTOP CHUYÊN NGHIỆP (KHUYÊN DÙNG CHO BÁO CÁO / DEMO):
+- Chạy trực tiếp file:
+    python attacker_gui.py
+    (Hoặc click đúp vào file chay_attacker_gui.bat ở thư mục gốc)
+- Tính năng:
+    + Cửa sổ Desktop Native (CustomTkinter phong cách Dark Red Team Console).
+    + Có ô nhập IP/Port, nút Ping kiểm tra kết nối với độ trễ thời gian thực.
+    + Tab 1 (DoS): Có thanh trượt chỉnh số luồng (5-40 threads), thời gian (5-30s),
+      thanh tiến độ và 3 thẻ KPI đếm số gói, số mã 503 và số gói bị Tường lửa DROP.
+    + Tab 2 (SQLi): Trích xuất và hiển thị trọn vẹn Bảng CSDL khách hàng (ID, Họ tên,
+      Tài khoản, Số dư, Hash mật khẩu).
+    + Tab 3 (XSS): Tiêm mã độc JavaScript và hiển thị bằng chứng lưu trữ.
+    + Tab 4 (Chiến dịch): Tự động phối hợp bắn cả 3 đòn liên tiếp.
+    + Tự động nhận diện Phản đòn khi bị HIPS khóa (hiển thị thẻ cảnh báo đỏ rực).
+
+B. GIAO DIỆN DÒNG LỆNH MENU TƯƠNG TÁC (DÀNH CHO MÁY ẢO LINUX SERVER KHÔNG CÓ GUI):
+- Chạy:
+    python3 attacker.py
+- Hiện menu số 1-4 để chọn trực tiếp mà không cần gõ tham số phức tạp.
+
+3. HIỆN TƯỢNG ĐỐI CHỨNG (TRƯỚC & SAU KHI CÓ PHÒNG THỦ):
+* Khi CHƯA BẬT NIDS/HIPS:
+  - DoS: Màn hình báo "Máy chủ bị quá tải và trả về mã lỗi 503 Service Unavailable".
+  - SQLi: Trích xuất trọn vẹn 4 tài khoản CSDL khách hàng với $4,865,000.
+  - XSS: Mã độc được chấp nhận và lưu trữ vào bộ nhớ máy chủ.
+
+* Khi ĐÃ BẬT NIDS + HIPS (Tường lửa OS):
+  - NIDS bắt gói tin thô trên Card mạng -> Gửi tin ký số HMAC sang HIPS.
+  - HIPS gọi lệnh Tường lửa khóa IP của Attacker.
+  - Giao diện Attacker lập tức hiện thông báo:
+    "PHẢN ĐÒN TỪ MÁY CHỦ: BẠN ĐÃ BỊ TẤN CÔNG NGƯỢC! TƯỜNG LỬA HIPS ĐÃ KHÓA IP CỦA BẠN (DROP 100%)!"
+================================================================================
