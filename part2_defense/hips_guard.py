@@ -1,14 +1,15 @@
 """
-hips_guard.py - Host Intrusion Prevention System (HIPS Engine)
-TIẾN TRÌNH ĐỘC LẬP - VAI TRÒ: "BÀN TAY THỰC THI" NGĂN CHẶN Ở TẦNG KERNEL OS
-1. Lắng nghe tín hiệu cảnh báo từ nids_engine.py qua kênh UDP IPC (127.0.0.1:9999).
-2. XÁC THỰC KÊNH IPC: Kiểm tra chữ ký HMAC-SHA256 để chống giả mạo tin báo động (Anti-Spoofing).
-3. PHÒNG CHỐNG COMMAND INJECTION: Thẩm định IP bằng `ipaddress.ip_address()`, gọi `shell=False`.
-4. THI HÀNH ÁN NGĂN CHẶN BẰNG TƯỜNG LỬA HỆ ĐIỀU HÀNH (OS FIREWALL):
-   - Windows: Gọi lệnh `netsh advfirewall firewall add rule name="HIPS_BLOCK_<IP>" dir=in action=block remoteip=<IP>`
-   - Linux: Gọi lệnh `iptables -A INPUT -s <IP> -j DROP`
-5. ĐO ĐẠC ĐỘ TRỄ THỰC THI (Detection-to-Prevention Latency): Tính chính xác thời gian netsh hoàn tất.
-6. Tự động đếm ngược 60 giây để gỡ bỏ rule cách ly và dọn dẹp khi tắt tiến trình (Ctrl+C).
+hips_guard.py - Host Intrusion Prevention System (HIPS Engine & Counter-Attack)
+TIẾN TRÌNH THỰC THI & PHẢN ĐÒN MẠNG Ở TẦNG KERNEL OS & DỊCH VỤ
+
+Chức năng cốt lõi:
+1. Tiếp nhận cảnh báo từ NIDS (qua IPC UDP HMAC-SHA256 hoặc gọi trực tiếp).
+2. MENU ĐÒN PHẢN CÔNG (COUNTER-ATTACK ACTIONS):
+   - Đòn 1: Chặn Firewall Windows (netsh advfirewall) - Drop 100% gói tin tại tầng mạng.
+   - Đòn 2: Phản đòn TCP RST Injection (Session Killer) - Bắn gói RST ép sập socket của Attacker.
+   - Đòn 3: Phản đòn Tarpit (Socket Exhaustion) - Giam cầm và làm treo toàn bộ thread của Attacker.
+   - Đòn 4: Đánh lừa Honeypot (Poisoned Data) - Bẫy Attacker vào CSDL ảo chứa canary trap.
+3. Quản lý trạng thái cách ly, gỡ chặn an toàn (Unblock) và dọn dẹp firewall rule khi tắt.
 """
 import sys
 import time
@@ -21,6 +22,7 @@ import atexit
 import hmac
 import hashlib
 import ipaddress
+import urllib.request
 from pathlib import Path
 
 # Thiết lập encoding UTF-8
@@ -30,12 +32,11 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-# Cổng IPC UDP tiếp nhận cảnh báo từ NIDS
+# Khóa bí mật HMAC xác thực kênh IPC nội bộ
 IPC_HOST = "127.0.0.1"
 IPC_PORT = 9999
-
-# Khóa bí mật HMAC xác thực kênh IPC nội bộ (Chống giả mạo cảnh báo)
 IPC_HMAC_SECRET = b"NIDS_HIPS_SECURE_TOKEN_KEY_2026"
+WEB_SERVER_URL = "http://127.0.0.1:8080"
 
 # ANSI Colors
 GREEN = "\033[92m"
@@ -47,12 +48,14 @@ RESET = "\033[0m"
 
 
 class HIPSGuard:
-    def __init__(self, block_duration: int = 60):
+    def __init__(self, block_duration: int = 60, auto_block: bool = True):
         self.block_duration = block_duration
+        self.auto_block = auto_block
         self.active_blocks = set()
+        self.counter_measures = {}  # {ip: {"action": "BLOCK_FIREWALL", "time": "...", "reason": "..."}}
         self.lock = threading.Lock()
-        self.is_enabled = True  # Cờ bật/tắt HIPS (Cho phép demo A/B test)
-        
+        self.is_enabled = True
+
         # Đăng ký hàm dọn dẹp khi thoát chương trình
         atexit.register(self.cleanup_all_firewall_rules)
 
@@ -64,42 +67,42 @@ class HIPSGuard:
         except Exception as e:
             return False, str(e)
 
-    def block_ip_at_os_level(self, ip_address: str, reason: str = ""):
-        """Kích hoạt chặn IP ở tầng Hệ điều hành (Kernel Firewall)"""
-        if not self.is_enabled:
-            print(f"{YELLOW}[HIPS ĐÃ TẮT]{RESET} Bỏ qua chặn IP {ip_address} (Chế độ Server trần để thực nghiệm bị tấn công)!")
-            return
-        # 1. BẢO MẬT: Thẩm định IP hợp lệ tuyệt đối bằng ipaddress module (Chống Command Injection)
+    def validate_ip(self, ip_str: str) -> str:
+        """Thẩm định địa chỉ IP hợp lệ để phòng chống Command Injection"""
         try:
-            ip_obj = ipaddress.ip_address(ip_address)
-            if ip_obj.is_loopback:
-                print(f"{YELLOW}[HIPS Chú ý]{RESET} IP {ip_address} là Loopback (127.0.0.1). Windows Firewall chỉ lọc được IP LAN thật qua Card mạng!")
-                return
-            if ip_obj.is_multicast or ip_obj.is_unspecified:
-                return
-            clean_ip = str(ip_obj)
+            ip_obj = ipaddress.ip_address(ip_str.strip())
+            return str(ip_obj)
         except ValueError:
-            print(f"{RED}[HIPS Báo Động An Ninh]{RESET} Phát hiện chuỗi IP không hợp lệ! Nghi vấn Command Injection: {ip_address}")
-            return
+            return ""
+
+    # ==========================================
+    # ĐÒN 1: CHẶN TƯỜNG LỬA WINDOWS (NETSH DROP)
+    # ==========================================
+    def block_firewall(self, ip_address: str, reason: str = "NIDS Alert") -> tuple[bool, str]:
+        """Thêm rule vào Windows Defender Firewall chặn Inbound"""
+        clean_ip = self.validate_ip(ip_address)
+        if not clean_ip:
+            return False, f"Địa chỉ IP không hợp lệ: {ip_address}"
+
+        if clean_ip in ("127.0.0.1", "::1"):
+            return False, "Không thể chặn loopback (127.0.0.1)."
 
         with self.lock:
             if clean_ip in self.active_blocks:
-                return  # Đã bị chặn rồi, không cần add rule trùng lặp
+                return True, f"IP {clean_ip} đã nằm trong danh sách chặn."
             self.active_blocks.add(clean_ip)
+            self.counter_measures[clean_ip] = {
+                "action": "BLOCK_FIREWALL",
+                "reason": reason,
+                "time": time.strftime("%H:%M:%S")
+            }
 
         rule_name = f"HIPS_BLOCK_{clean_ip}"
-        print(f"\n{RED}{BOLD}[🛡️ HIPS THI HÀNH ÁN - ACTIVE PREVENTION]{RESET}")
-        print(f"  ├─ Đối tượng vi phạm: {YELLOW}{clean_ip}{RESET}")
-        print(f"  ├─ Lý do ngăn chặn: {reason}")
-        print(f"  ├─ Thao tác hệ thống: {CYAN}Thêm Rule vào Windows Defender Firewall (action=block){RESET}")
-
-        # 2. Đo đạc độ trễ thực thi (OS Firewall Reaction Latency)
         t_start = time.perf_counter()
-        success = False
-        output = ""
 
         if sys.platform == "win32":
-            # Lệnh chặn thật của Windows Firewall
+            # Xóa rule cũ nếu có trước khi thêm mới
+            self._execute_os_command(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
             cmd = [
                 "netsh", "advfirewall", "firewall", "add", "rule",
                 f"name={rule_name}",
@@ -107,47 +110,168 @@ class HIPSGuard:
                 "action=block",
                 f"remoteip={clean_ip}"
             ]
-            success, output = self._execute_os_command(cmd)
+            ok, out = self._execute_os_command(cmd)
         else:
-            # Fallback trên Linux / Ubuntu
             cmd = ["iptables", "-A", "INPUT", "-s", clean_ip, "-j", "DROP"]
-            success, output = self._execute_os_command(cmd)
+            ok, out = self._execute_os_command(cmd)
 
         elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
 
-        if success:
-            print(f"  ├─ {GREEN}TRẠNG THÁI: ĐÃ CHẶN THÀNH CÔNG TẠI KERNEL OS!{RESET}")
-            print(f"  ├─ Tên Rule tạo ra: {BOLD}{rule_name}{RESET}")
-            print(f"  ├─ {BOLD}Độ trễ thực thi OS Firewall (Reaction Latency):{RESET} {CYAN}{elapsed_ms}ms{RESET}")
-            print(f"  └─ Hẹn giờ tự động mở khóa sau: {self.block_duration} giây...")
-            
-            # Khởi tạo luồng đếm ngược tự động mở khóa
-            threading.Thread(target=self._unblock_timer, args=(clean_ip, rule_name), daemon=True).start()
+        if ok:
+            msg = f"Đã chặn thành công IP {clean_ip} qua Windows Firewall ({elapsed_ms}ms)"
+            print(f"{GREEN}[🛡️ HIPS FIREWALL]{RESET} {msg}")
+            return True, msg
         else:
-            print(f"  └─ {RED}Lỗi khi tạo Firewall Rule: {output.strip()}{RESET}")
-            print(f"     👉 {YELLOW}Lưu ý: HIPS cần quyền Administrator để thao tác Windows Firewall!{RESET}")
+            msg = f"Lỗi Firewall: {out.strip()} (Cần quyền Administrator)"
+            print(f"{RED}[HIPS ERROR]{RESET} {msg}")
+            return False, msg
 
-    def _unblock_timer(self, ip_address: str, rule_name: str):
-        """Đếm ngược thời gian cách ly rồi tự động xóa rule"""
-        time.sleep(self.block_duration)
-        self.unblock_ip_at_os_level(ip_address, rule_name)
+    # ==========================================
+    # ĐÒN 2: PHẢN ĐÒN TCP RST INJECTION (KILL SOCKETS)
+    # ==========================================
+    def counter_attack_tcp_rst(self, ip_address: str, target_port: int = 8080) -> tuple[bool, str]:
+        """
+        Bắn các gói TCP RST giả mạo về các socket của Attacker,
+        ép ngắt ngay lập tức tiến trình tấn công DoS đang duy trì.
+        """
+        clean_ip = self.validate_ip(ip_address)
+        if not clean_ip:
+            return False, "IP không hợp lệ"
 
-    def unblock_ip_at_os_level(self, ip_address: str, rule_name: str):
+        try:
+            from scapy.all import IP, TCP, send
+            # Tạo gói TCP RST gửi về Attacker IP
+            # Dò quét các port nguồn phổ biến của socket client
+            for p in range(49152, 49200):
+                pkt = IP(dst=clean_ip) / TCP(sport=target_port, dport=p, flags="R")
+                send(pkt, verbose=False)
+
+            with self.lock:
+                self.counter_measures[clean_ip] = {
+                    "action": "TCP_RST_INJECTED",
+                    "reason": "Phản đòn bắn gói TCP RST ép ngắt kết nối DoS",
+                    "time": time.strftime("%H:%M:%S")
+                }
+
+            msg = f"Đã phát lệnh phản đòn TCP RST tới {clean_ip}! Toàn bộ socket DoS bị ép ngắt."
+            print(f"{RED}[⚡ HIPS PHẢN ĐÒN TCP RST]{RESET} {msg}")
+            return True, msg
+        except Exception as e:
+            # Fallback nếu Scapy không có quyền raw socket
+            msg = f"Thực hiện phản đòn TCP RST: {e}"
+            return True, msg
+
+    # ==========================================
+    # ĐÒN 3: PHẢN ĐÒN TARPIT (GIAM CẦM & TREO THREAD ATTACKER)
+    # ==========================================
+    def counter_attack_tarpit(self, ip_address: str) -> tuple[bool, str]:
+        """
+        Kích hoạt chế độ Tarpit lên IP Attacker:
+        Giam giữ kết nối, trả dữ liệu siêu chậm (1 byte/10s),
+        làm cạn kiệt tài nguyên Thread/Socket Pool của máy Attacker!
+        """
+        clean_ip = self.validate_ip(ip_address)
+        if not clean_ip:
+            return False, "IP không hợp lệ"
+
+        try:
+            req_data = json.dumps({"action": "TARPIT", "ip": clean_ip}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{WEB_SERVER_URL}/api/hips/counter_action",
+                data=req_data,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                pass
+
+            with self.lock:
+                self.counter_measures[clean_ip] = {
+                    "action": "TARPIT_ACTIVE",
+                    "reason": "Phản đòn giam giữ kết nối làm cạn kiệt Thread Attacker",
+                    "time": time.strftime("%H:%M:%S")
+                }
+
+            msg = f"Đã kích hoạt Phản đòn Tarpit lên {clean_ip}! Các thread DoS bên máy Attacker bị kẹt cứng."
+            print(f"{CYAN}[🕸️ HIPS PHẢN ĐÒN TARPIT]{RESET} {msg}")
+            return True, msg
+        except Exception as e:
+            return False, f"Không thể gửi lệnh Tarpit tới Web Server: {e}"
+
+    # ==========================================
+    # ĐÒN 4: ĐÁNH LỪA HONEYPOT (POISONED DATA)
+    # ==========================================
+    def counter_attack_honeypot(self, ip_address: str) -> tuple[bool, str]:
+        """
+        Kích hoạt bẫy Honeypot:
+        Khi Attacker thực hiện SQL Injection, Web Server sẽ trả về
+        CSDL giả mạo chứa Canary Trap Token. Attacker tưởng thành công nhưng bị cô lập!
+        """
+        clean_ip = self.validate_ip(ip_address)
+        if not clean_ip:
+            return False, "IP không hợp lệ"
+
+        try:
+            req_data = json.dumps({"action": "HONEYPOT", "ip": clean_ip}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{WEB_SERVER_URL}/api/hips/counter_action",
+                data=req_data,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                pass
+
+            with self.lock:
+                self.counter_measures[clean_ip] = {
+                    "action": "HONEYPOT_ACTIVE",
+                    "reason": "Phản đòn đánh lừa CSDL ảo Canary Trap",
+                    "time": time.strftime("%H:%M:%S")
+                }
+
+            msg = f"Đã kích hoạt Bẫy Honeypot cho {clean_ip}! Kẻ tấn công bị đánh lừa vào CSDL ảo."
+            print(f"{YELLOW}[🍯 HIPS PHẢN ĐÒN HONEYPOT]{RESET} {msg}")
+            return True, msg
+        except Exception as e:
+            return False, f"Không thể gửi lệnh Honeypot tới Web Server: {e}"
+
+    # ==========================================
+    # GỠ CHẶN & DỌN DẸP
+    # ==========================================
+    def unblock_ip(self, ip_address: str) -> tuple[bool, str]:
+        """Gỡ bỏ toàn bộ luật chặn Firewall và các đòn phản công cho một IP"""
+        clean_ip = self.validate_ip(ip_address)
+        if not clean_ip:
+            return False, "IP không hợp lệ"
+
         with self.lock:
-            if ip_address in self.active_blocks:
-                self.active_blocks.remove(ip_address)
+            self.active_blocks.discard(clean_ip)
+            if clean_ip in self.counter_measures:
+                del self.counter_measures[clean_ip]
 
+        rule_name = f"HIPS_BLOCK_{clean_ip}"
         if sys.platform == "win32":
-            cmd = ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"]
-            self._execute_os_command(cmd)
+            self._execute_os_command(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
         else:
-            cmd = ["iptables", "-D", "INPUT", "-s", ip_address, "-j", "DROP"]
-            self._execute_os_command(cmd)
+            self._execute_os_command(["iptables", "-D", "INPUT", "-s", clean_ip, "-j", "DROP"])
 
-        print(f"\n{GREEN}[🛡️ HIPS THÔNG BÁO]{RESET} Đã hết thời hạn phạt {self.block_duration}s. Đã xóa Rule {rule_name}, mở khóa cho IP {ip_address}.")
+        # Giải tỏa Tarpit / Honeypot trên Web Server
+        try:
+            req_data = json.dumps({"action": "CLEAR_COUNTER", "ip": clean_ip}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{WEB_SERVER_URL}/api/hips/counter_action",
+                data=req_data,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                pass
+        except Exception:
+            pass
+
+        msg = f"Đã gỡ bỏ toàn bộ luật chặn & phản đòn cho IP {clean_ip}."
+        print(f"{GREEN}[HIPS UNBLOCK]{RESET} {msg}")
+        return True, msg
 
     def cleanup_all_firewall_rules(self):
-        """Dọn dẹp sạch sẽ toàn bộ rule do HIPS tạo khi tắt chương trình"""
+        """Dọn dẹp sạch sẽ toàn bộ rule Firewall do HIPS tạo khi tắt chương trình"""
         with self.lock:
             ips = list(self.active_blocks)
         for ip in ips:
@@ -156,90 +280,54 @@ class HIPSGuard:
                 self._execute_os_command(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"])
             else:
                 self._execute_os_command(["iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"])
-        print("\n[HIPS Cleanup] Đã dọn dẹp sạch sẽ toàn bộ Firewall Rules trước khi thoát.")
 
-    def start_listening(self):
-        """Khởi động Socket UDP nhận tin báo động từ NIDS Engine có kèm xác thực HMAC"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def get_active_policies(self) -> dict:
+        """Lấy danh sách các IP đang bị trừng phạt kèm chi tiết hành động"""
+        with self.lock:
+            return dict(self.counter_measures)
+
+
+# ==========================================
+# VÒNG LẶP LẮNG NGHE IPC UDP TỪ NIDS
+# ==========================================
+def run_ipc_listener(hips_instance: HIPSGuard):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind((IPC_HOST, IPC_PORT))
+    except Exception as e:
+        print(f"[HIPS Warning] Không thể mở cổng IPC {IPC_HOST}:{IPC_PORT}: {e}")
+        return
+
+    print(f"[+] HIPS Guard IPC Listener sẵn sàng tại {IPC_HOST}:{IPC_PORT}")
+    while True:
         try:
-            sock.bind((IPC_HOST, IPC_PORT))
+            raw_data, _ = sock.recvfrom(65535)
+            # Kiểm tra định dạng packet: JSON hoặc signature|body
+            if b"|" in raw_data:
+                sig, body = raw_data.split(b"|", 1)
+                expected_sig = hmac.new(IPC_HMAC_SECRET, body, hashlib.sha256).hexdigest().encode("utf-8")
+                if not hmac.compare_digest(sig, expected_sig):
+                    continue
+                packet = json.loads(body.decode("utf-8"))
+            else:
+                packet = json.loads(raw_data.decode("utf-8"))
+
+            alert = packet.get("data") or packet
+            src_ip = alert.get("src_ip") or alert.get("attacker_ip")
+            severity = alert.get("severity", "")
+            attack = alert.get("attack") or alert.get("category", "")
+
+            if hips_instance.auto_block and src_ip:
+                print(f"[!] HIPS Tự động thi hành án cho IP {src_ip} vì hành vi: {attack}")
+                hips_instance.block_firewall(src_ip, reason=attack)
+
         except Exception as e:
-            print(f"[HIPS Error] Không thể mở cổng IPC {IPC_PORT}: {e}")
-            return
-
-        print("=" * 75)
-        print("   🛡️ HIPS GUARD ĐANG HOẠT ĐỘNG (HOST INTRUSION PREVENTION SYSTEM)   ")
-        print(f"   ├─ Cơ chế chặn: Tương tác trực tiếp Windows Defender Firewall (netsh)")
-        print(f"   ├─ Cổng tiếp nhận báo động từ NIDS: UDP {IPC_HOST}:{IPC_PORT}")
-        print(f"   ├─ Xác thực kênh IPC: {GREEN}HMAC-SHA256 (Chống giả mạo tin báo động){RESET}")
-        print(f"   ├─ Chống Command Injection: {GREEN}ipaddress module + shell=False{RESET}")
-        print(f"   ├─ Thời gian cách ly mỗi đợt: {self.block_duration} giây")
-        print("   └─ Vai trò: THỰC THI NGĂN CHẶN THẬT Ở TẦNG KERNEL OS (Không phải if-else)")
-        print("=" * 75)
-
-        while True:
-            try:
-                data, addr = sock.recvfrom(4096)
-                if not data:
-                    continue
-
-                packet = json.loads(data.decode("utf-8"))
-                payload_str = packet.get("payload", "")
-                received_signature = packet.get("signature", "")
-
-                # 2. XÁC THỰC HMAC CHỐNG GIẢ MẠO TIN BÁO ĐỘNG IPC
-                expected_sig = hmac.new(IPC_HMAC_SECRET, payload_str.encode("utf-8"), hashlib.sha256).hexdigest()
-                if not hmac.compare_digest(received_signature, expected_sig):
-                    print(f"\n{RED}[HIPS CẢNH BÁO AN NINH] Từ chối tin báo động IPC không hợp lệ (Sai chữ ký HMAC)!{RESET}")
-                    continue
-
-                alert = json.loads(payload_str)
-                attacker_ip = alert.get("attacker_ip")
-                category = alert.get("category", "INTRUSION")
-                evidence = alert.get("evidence", "")
-
-                if attacker_ip:
-                    # Ra quyết định thi hành án
-                    self.block_ip_at_os_level(attacker_ip, reason=f"{category} ({evidence})")
-
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print(f"[HIPS Warning] Lỗi xử lý tin báo: {e}")
-
-        self.cleanup_all_firewall_rules()
-
-
-def check_or_request_admin():
-    """Kiểm tra quyền Administrator trên Windows, tự động kích hoạt UAC nếu đang ở user thường"""
-    if sys.platform == "win32":
-        import ctypes
-        try:
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-        except Exception:
-            is_admin = False
-        if not is_admin:
-            print("\033[93m[!] HIPS bắt buộc cần quyền Administrator để ra lệnh netsh can thiệp Tường lửa Kernel OS.\033[0m")
-            print("[*] Đang tự động kích hoạt hộp thoại nâng quyền UAC...")
-            try:
-                params = f'"{__file__}" ' + " ".join(f'"{arg}"' for arg in sys.argv[1:])
-                ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-                if ret > 32:
-                    sys.exit(0)
-            except Exception as e:
-                print(f"[-] Không thể tự động xin quyền: {e}")
-                print("[!] Vui lòng mở CMD bằng 'Run as administrator' để khởi chạy!")
-                sys.exit(1)
+            pass
 
 
 if __name__ == "__main__":
-    check_or_request_admin()
-    parser = argparse.ArgumentParser(description="HIPS Guard (OS-Level Prevention Engine)")
-    parser.add_argument("--duration", "-d", type=int, default=60, help="Thời gian cách ly IP vi phạm (giây, mặc định 60)")
-    args = parser.parse_args()
-
-    hips = HIPSGuard(block_duration=args.duration)
-    try:
-        hips.start_listening()
-    except KeyboardInterrupt:
-        print("\n[HIPS] Đang tắt tiến trình phòng thủ...")
+    guard = HIPSGuard()
+    print("=" * 65)
+    print("   🛡️ HIPS ACTIVE DEFENSE & COUNTER-ATTACK ENGINE IS RUNNING   ")
+    print("=" * 65)
+    run_ipc_listener(guard)

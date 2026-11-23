@@ -5,29 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cổng Dịch Vụ Ngân Hàng Trực Tuyến - DIGIBANK</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {
-            background-color: #f4f6f9;
-            color: #2c3e50;
+            background-color: #f1f5f9;
+            color: #1e293b;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
         .navbar-brand {
             font-weight: 800;
             font-size: 22px;
-            color: #0d6efd !important;
+            color: #0284c7 !important;
             letter-spacing: -0.5px;
         }
         .hero-section {
-            background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
             color: white;
-            padding: 50px 0;
-            margin-bottom: 40px;
+            padding: 40px 0;
+            margin-bottom: 30px;
+            border-bottom: 4px solid #0284c7;
         }
         .service-card {
             background: white;
             border: 1px solid #e2e8f0;
             border-radius: 12px;
-            padding: 28px 24px;
+            padding: 24px;
             height: 100%;
             transition: transform 0.2s, box-shadow 0.2s;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
@@ -37,14 +39,14 @@
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
         .service-icon {
-            font-size: 38px;
-            margin-bottom: 16px;
+            font-size: 34px;
+            margin-bottom: 14px;
             display: inline-block;
         }
         .section-title {
-            font-size: 24px;
+            font-size: 20px;
             font-weight: 700;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             color: #0f172a;
         }
         .form-card {
@@ -54,11 +56,29 @@
             padding: 24px;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
         }
+        .council-box {
+            background: #f0fdf4;
+            border: 2px dashed #16a34a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .comment-item {
+            background: #f8fafc;
+            border-left: 4px solid #0284c7;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .comment-item.malicious {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
         footer {
             background-color: #0f172a;
             color: #94a3b8;
-            padding: 30px 0;
-            margin-top: 60px;
+            padding: 25px 0;
+            margin-top: 50px;
             font-size: 14px;
         }
     </style>
@@ -66,18 +86,37 @@
 <body>
 
     <!-- Header Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3">
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3 sticky-top shadow-sm">
         <div class="container">
-            <a class="navbar-brand" href="/">🏦 DIGIBANK ONLINE</a>
+            <a class="navbar-brand" href="/">
+                <i class="fa-solid fa-building-columns text-primary me-2"></i>DIGIBANK ONLINE
+            </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto gap-3">
+                <ul class="navbar-nav ms-auto gap-2 align-items-center">
                     <li class="nav-item"><a class="nav-link active fw-semibold" href="/">Trang Chủ</a></li>
-                    <li class="nav-item"><a class="nav-link fw-semibold" href="/service/statement">Sao Kê Tài Khoản</a></li>
+                    <li class="nav-item"><a class="nav-link fw-semibold" href="/service/statement">Sao Kê Số Dư</a></li>
                     <li class="nav-item"><a class="nav-link fw-semibold" href="/service/transfer">Chuyển Tiền</a></li>
                     <li class="nav-item"><a class="nav-link fw-semibold" href="/service/loan">Khoản Vay</a></li>
+                    
+                    {% if logged_user %}
+                    <li class="nav-item ms-lg-2">
+                        <span class="badge bg-primary-subtle text-primary border border-primary px-3 py-2">
+                            <i class="fa-solid fa-user-check me-1"></i> {{ logged_user.full_name }} ({{ logged_user.role }})
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/logout" class="btn btn-sm btn-outline-danger">Đăng Xuất</a>
+                    </li>
+                    {% else %}
+                    <li class="nav-item ms-lg-2">
+                        <button class="btn btn-sm btn-outline-primary fw-semibold" data-bs-toggle="modal" data-bs-target="#loginModal">
+                            <i class="fa-solid fa-right-to-bracket me-1"></i> Đăng Nhập
+                        </button>
+                    </li>
+                    {% endif %}
                 </ul>
             </div>
         </div>
@@ -88,68 +127,255 @@
         <div class="container">
             <div class="row align-items-center">
                 <div class="col-lg-8">
-                    <h1 class="display-6 fw-bold mb-3">Cổng Dịch Vụ Tài Chính Trực Tuyến</h1>
-                    <p class="lead mb-0 text-light opacity-90">Hệ thống giao dịch số xử lý trực tuyến 24/7. Vui lòng lựa chọn các dịch vụ bên dưới để thực hiện giao dịch.</p>
+                    <span class="badge bg-info text-dark mb-2 px-3 py-1 fw-bold">
+                        <i class="fa-solid fa-shield-halved me-1"></i> HỆ THỐNG MỤC TIÊU (VICTIM WEB SERVER)
+                    </span>
+                    <h1 class="display-6 fw-bold mb-2">Cổng Giao Dịch Tài Chính Trực Tuyến</h1>
+                    <p class="lead mb-0 text-light opacity-90 fs-6">
+                        Trực tuyến 24/7. Được giám sát bởi Hệ Thống NIDS & HIPS Phòng Thủ Mạng Chủ Động.
+                    </p>
+                </div>
+                <div class="col-lg-4 text-lg-end mt-3 mt-lg-0">
+                    <div class="card bg-dark text-white border-secondary p-3 text-start">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small text-secondary">Trạng thái máy chủ:</span>
+                            <span class="badge bg-success">● HOẠT ĐỘNG TỐT</span>
+                        </div>
+                        <div class="small text-secondary mb-1">Worker Slots khả dụng: <strong>{{ 6 }} slots</strong></div>
+                        <div class="small text-secondary">Tổng số yêu cầu: <strong>{{ metrics.total_requests }} reqs</strong></div>
+                    </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Main Services -->
     <main class="container">
-        <h2 class="section-title">Danh Mục Dịch Vụ Khách Hàng</h2>
-        
+
+        <!-- THÔNG BÁO LỖI NẾU CÓ -->
+        {% if reg_error %}
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="fa-solid fa-triangle-exclamation me-2"></i>{{ reg_error }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endif %}
+        {% if login_error %}
+        <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fa-solid fa-circle-exclamation me-2"></i>{{ login_error }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endif %}
+
+        <!-- KHU VỰC DÀNH CHO HỘI ĐỒNG CHẤM THI TƯƠNG TÁC THỰC TẾ -->
+        <div class="council-box">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4 class="fw-bold text-success mb-0">
+                    <i class="fa-solid fa-user-graduate me-2"></i>KHU VỰC THỬ NGHIỆM DÀNH CHO HỘI ĐỒNG CHẤM THI
+                </h4>
+                <span class="badge bg-success px-3 py-2">Minh Chứng Tương Tác Sống</span>
+            </div>
+            <p class="text-secondary small mb-3">
+                Thầy/Cô Hội đồng có thể sử dụng điện thoại hoặc laptop cá nhân đăng ký một tài khoản mới tại form bên dưới. 
+                Sau đó, bên máy <strong>Attacker</strong> bấm nút <strong>"Khai thác SQLi"</strong> sẽ lập tức trích xuất được chính tài khoản Thầy/Cô vừa tạo!
+            </p>
+
+            <div class="row g-3">
+                <!-- Form Đăng Ký Tài Khoản -->
+                <div class="col-md-5">
+                    <div class="card border-0 shadow-sm p-3 bg-white h-100">
+                        <h6 class="fw-bold text-dark mb-3">
+                            <i class="fa-solid fa-user-plus text-success me-1"></i> Đăng Ký Tài Khoản Mới
+                        </h6>
+                        <form action="/register" method="POST">
+                            <div class="mb-2">
+                                <label class="form-label small fw-semibold">Họ và Tên (Thầy/Cô):</label>
+                                <input type="text" name="full_name" class="form-control form-control-sm" placeholder="VD: TS. Nguyễn Văn A" required>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small fw-semibold">Tên đăng nhập (Username):</label>
+                                <input type="text" name="username" class="form-control form-control-sm" placeholder="VD: thay_phan_bien" required>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small fw-semibold">Mật khẩu:</label>
+                                <input type="password" name="password" class="form-control form-control-sm" placeholder="Nhập mật khẩu" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Chức vụ trong Hội đồng:</label>
+                                <select name="role" class="form-select form-select-sm">
+                                    <option value="Chủ Tịch Hội Đồng">Chủ Tịch Hội Đồng</option>
+                                    <option value="Ủy Viên Phản Biện 1" selected>Ủy Viên Phản Biện 1</option>
+                                    <option value="Ủy Viên Phản Biện 2">Ủy Viên Phản Biện 2</option>
+                                    <option value="Ủy Viên Thư Ký">Ủy Viên Thư Ký</option>
+                                    <option value="Thành Viên Hội Đồng">Thành Viên Hội Đồng</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-success btn-sm w-100 fw-bold py-2">
+                                <i class="fa-solid fa-check me-1"></i> XÁC NHẬN TẠO TÀI KHOẢN
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Bảng Danh Sách Khách Hàng / Tài Khoản Trong CSDL -->
+                <div class="col-md-7">
+                    <div class="card border-0 shadow-sm p-3 bg-white h-100">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="fw-bold text-dark mb-0">
+                                <i class="fa-solid fa-database text-primary me-1"></i> Dữ Liệu Trong CSDL Máy Chủ (Mục Tiêu SQLi)
+                            </h6>
+                            <span class="badge bg-secondary small">{{ customers | length }} tài khoản</span>
+                        </div>
+                        <div class="table-responsive small" style="max-height: 240px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Họ Tên</th>
+                                        <th>Username</th>
+                                        <th>Vai Trò</th>
+                                        <th>Số Dư</th>
+                                        <th>Trạng Thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for c in customers %}
+                                    <tr {% if c.is_new %}class="table-warning fw-bold"{% endif %}>
+                                        <td>#{{ c.id }}</td>
+                                        <td>{{ c.full_name }}</td>
+                                        <td><code>{{ c.username }}</code></td>
+                                        <td><span class="badge bg-info-subtle text-dark">{{ c.role }}</span></td>
+                                        <td class="text-success fw-bold">{{ c.balance }}</td>
+                                        <td>
+                                            {% if c.is_new %}
+                                            <span class="badge bg-danger animate__animated animate__pulse">VỪA TẠO</span>
+                                            {% else %}
+                                            <span class="badge bg-light text-muted">Có sẵn</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DANH MỤC DỊCH VỤ NGÂN HÀNG (MỤC TIÊU KIỂM TRA SẬP DoS 503) -->
+        <h4 class="section-title">
+            <i class="fa-solid fa-layer-group text-primary me-2"></i>Dịch Vụ Trực Tuyến (Mục Tiêu Thử Nghiệm DoS)
+        </h4>
         <div class="row g-4 mb-5">
-            <!-- Service 1: Statement -->
+            <!-- Dịch vụ 1: Sao kê -->
             <div class="col-md-4">
                 <div class="service-card d-flex flex-column justify-content-between">
                     <div>
-                        <div class="service-icon">💳</div>
-                        <h4 class="fw-bold mb-2">Sao Kê & Số Dư</h4>
-                        <p class="text-muted">Tra cứu số dư khả dụng, kết xuất biến động số dư và sao kê các giao dịch tài chính gần nhất.</p>
+                        <div class="service-icon text-primary"><i class="fa-solid fa-credit-card"></i></div>
+                        <h5 class="fw-bold mb-2">Sao Kê & Tra Cứu Số Dư</h5>
+                        <p class="text-muted small">Tra cứu số dư khả dụng, kết xuất biến động số dư và sao kê các giao dịch tài chính gần nhất.</p>
                     </div>
-                    <a href="/service/statement" class="btn btn-primary w-100 py-2 fw-semibold mt-3">
+                    <a href="/service/statement" class="btn btn-outline-primary w-100 py-2 fw-semibold mt-3">
                         Thực Hiện Tra Cứu
                     </a>
                 </div>
             </div>
 
-            <!-- Service 2: Transfer -->
+            <!-- Dịch vụ 2: Chuyển tiền -->
             <div class="col-md-4">
                 <div class="service-card d-flex flex-column justify-content-between">
                     <div>
-                        <div class="service-icon">⚡</div>
-                        <h4 class="fw-bold mb-2">Chuyển Tiền Nhanh 24/7</h4>
-                        <p class="text-muted">Chuyển tiền liên ngân hàng tức thời qua số tài khoản hoặc số thẻ, miễn phí xử lý mọi khung giờ.</p>
+                        <div class="service-icon text-success"><i class="fa-solid fa-bolt"></i></div>
+                        <h5 class="fw-bold mb-2">Chuyển Tiền Nhanh 24/7</h5>
+                        <p class="text-muted small">Chuyển tiền liên ngân hàng tức thời qua số tài khoản hoặc số thẻ, miễn phí xử lý mọi khung giờ.</p>
                     </div>
-                    <a href="/service/transfer" class="btn btn-success w-100 py-2 fw-semibold mt-3">
+                    <a href="/service/transfer" class="btn btn-outline-success w-100 py-2 fw-semibold mt-3">
                         Khởi Tạo Giao Dịch
                     </a>
                 </div>
             </div>
 
-            <!-- Service 3: Loan -->
+            <!-- Dịch vụ 3: Khoản vay -->
             <div class="col-md-4">
                 <div class="service-card d-flex flex-column justify-content-between">
                     <div>
-                        <div class="service-icon">📄</div>
-                        <h4 class="fw-bold mb-2">Khoản Vay & Tín Dụng</h4>
-                        <p class="text-muted">Thẩm định hồ sơ vay tiêu dùng tự động lên đến 300 triệu đồng, giải ngân trực tiếp vào tài khoản.</p>
+                        <div class="service-icon text-dark"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                        <h5 class="fw-bold mb-2">Khoản Vay Trực Tuyến</h5>
+                        <p class="text-muted small">Thẩm định hồ sơ vay tiêu dùng tự động lên đến 300 triệu đồng, giải ngân trực tiếp vào tài khoản.</p>
                     </div>
-                    <a href="/service/loan" class="btn btn-dark w-100 py-2 fw-semibold mt-3">
+                    <a href="/service/loan" class="btn btn-outline-dark w-100 py-2 fw-semibold mt-3">
                         Đăng Ký Khoản Vay
                     </a>
                 </div>
             </div>
         </div>
 
-        <!-- Account Operations (Login & Feedback) -->
+        <!-- BẢNG TIN GÓP Ý & PHẢN HỒI (MỤC TIÊU TẤN CÔNG STORED XSS) -->
         <div class="row g-4">
-            <!-- Form Đăng nhập Internet Banking -->
-            <div class="col-md-6">
+            <!-- Form Gửi Phản Hồi -->
+            <div class="col-md-5">
                 <div class="form-card h-100">
-                    <h5 class="fw-bold mb-3">🔐 Đăng Nhập Khách Hàng</h5>
-                    <form action="/api/login" method="GET">
+                    <h5 class="fw-bold mb-3 text-dark">
+                        <i class="fa-solid fa-comment-dots text-primary me-2"></i>Gửi Ý Kiến & Đóng Góp
+                    </h5>
+                    <form action="/api/comment" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Họ và tên của bạn:</label>
+                            <input type="text" name="author" class="form-control" placeholder="Nhập họ tên" value="{{ logged_user.full_name if logged_user else '' }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Nội dung phản hồi dịch vụ:</label>
+                            <textarea name="content" class="form-control" rows="3" placeholder="Chia sẻ ý kiến của bạn về chất lượng dịch vụ..." required></textarea>
+                            <div class="form-text small text-muted">Bảng tin hiển thị công khai cho mọi khách hàng và Hội đồng.</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 fw-semibold">
+                            <i class="fa-solid fa-paper-plane me-1"></i> Gửi Ý Kiến Phản Hồi
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Danh Sách Bình Luận (Stored XSS Kích Hoạt Tại Đây) -->
+            <div class="col-md-7">
+                <div class="form-card h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold mb-0 text-dark">
+                            <i class="fa-solid fa-comments text-info me-2"></i>Bảng Tin Ý Kiến Khách Hàng
+                        </h5>
+                        <span class="badge bg-secondary">{{ comments | length }} phản hồi</span>
+                    </div>
+
+                    <div style="max-height: 320px; overflow-y: auto;">
+                        {% for cmt in comments %}
+                        <div class="comment-item {% if cmt.is_malicious %}malicious{% endif %}">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <strong class="small text-dark">
+                                    <i class="fa-solid fa-user-circle me-1"></i>{{ cmt.author }}
+                                </strong>
+                                <span class="badge bg-light text-muted small">{{ cmt.time }}</span>
+                            </div>
+                            <div class="comment-body small text-secondary">
+                                <!-- HIỂN THỊ NGUYÊN BẢN ĐỂ KÍCH HOẠT MÃ STORED XSS MINH CHỨNG CHO HỘI ĐỒNG -->
+                                {{ cmt.content | safe }}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal Đăng Nhập -->
+    <div class="modal fade" id="loginModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-lock text-primary me-2"></i>Đăng Nhập Khách Hàng</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/login" method="POST">
+                    <div class="modal-body">
                         <div class="mb-3">
                             <label class="form-label small fw-semibold">Tên đăng nhập / Số tài khoản</label>
                             <input type="text" name="user" class="form-control" placeholder="Nhập tài khoản (vd: admin)" required>
@@ -158,38 +384,24 @@
                             <label class="form-label small fw-semibold">Mật khẩu</label>
                             <input type="password" name="pass" class="form-control" placeholder="Nhập mật khẩu" required>
                         </div>
-                        <button type="submit" class="btn btn-outline-primary w-100 fw-semibold">Đăng Nhập Hệ Thống</button>
-                    </form>
-                </div>
-            </div>
-
-            <!-- Form Khảo sát ý kiến đóng góp -->
-            <div class="col-md-6">
-                <div class="form-card h-100">
-                    <h5 class="fw-bold mb-3">💬 Ý Kiến Đóng Góp & Phản Hồi</h5>
-                    <form action="/api/comment" method="POST">
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">Họ và tên khách hàng</label>
-                            <input type="text" name="author" class="form-control" placeholder="Họ tên của bạn" required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">Nội dung phản hồi dịch vụ</label>
-                            <textarea name="content" class="form-control" rows="2" placeholder="Cảm nhận của quý khách về dịch vụ..." required></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-outline-secondary w-100 fw-semibold">Gửi Đánh Giá</button>
-                    </form>
-                </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
+                        <button type="submit" class="btn btn-primary fw-bold">Đăng Nhập</button>
+                    </div>
+                </form>
             </div>
         </div>
-    </main>
+    </div>
 
     <!-- Footer -->
     <footer>
         <div class="container text-center">
-            <p class="mb-1">© 2026 Cổng Dịch Vụ Ngân Hàng Trực Tuyến - DIGIBANK. Mọi quyền được bảo lưu.</p>
-            <p class="mb-0 small text-secondary">Hệ thống đạt chuẩn an toàn bảo mật tài chính quốc tế PCI-DSS.</p>
+            <p class="mb-1 fw-semibold">© 2026 Cổng Dịch Vụ Ngân Hàng Trực Tuyến - DIGIBANK. Mọi quyền được bảo lưu.</p>
+            <p class="mb-0 small text-secondary">Hệ thống phòng thủ đa tầng NIDS (Network IDS) & HIPS (Host IPS Active Countermeasure).</p>
         </div>
     </footer>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
