@@ -10,7 +10,7 @@
 <br/>
 
 # ĐỀ TÀI:
-# NGHIÊN CỨU, THIẾT KẾ VÀ TRIỂN KHAI HỆ THỐNG PHÁT HIỆN VÀ NGĂN CHẶN XÂM NHẬP (NIDS/HIPS) BẢO VỆ MÁY CHỦ WEB DỰA TRÊN GIAO THỨC HTTP/TCP/UDP VÀ MÔ HÌNH CLIENT-SERVER PHÂN TÁN
+# XÂY DỰNG HỆ THỐNG PHÁT HIỆN VÀ NGĂN CHẶN XÂM NHẬP MẠNG ĐA TẦNG (NIDS & HIPS) DỰA TRÊN PHÂN TÍCH GIAO THỨC TCP/IP, HTTP THEO MÔ HÌNH CLIENT–SERVER PHÂN TÁN
 
 <br/><br/><br/>
 
@@ -31,7 +31,7 @@
 # THÔNG TIN TỔNG QUAN VỀ ĐỀ TÀI
 
 ### 1. Tên đề tài (IN HOA)
-**NGHIÊN CỨU, THIẾT KẾ VÀ TRIỂN KHAI HỆ THỐNG PHÁT HIỆN VÀ NGĂN CHẶN XÂM NHẬP (NIDS/HIPS) BẢO VỆ MÁY CHỦ WEB DỰA TRÊN GIAO THỨC HTTP/TCP/UDP VÀ MÔ HÌNH CLIENT-SERVER PHÂN TÁN**
+**XÂY DỰNG HỆ THỐNG PHÁT HIỆN VÀ NGĂN CHẶN XÂM NHẬP MẠNG ĐA TẦNG (NIDS & HIPS) DỰA TRÊN PHÂN TÍCH GIAO THỨC TCP/IP, HTTP THEO MÔ HÌNH CLIENT–SERVER PHÂN TÁN**
 
 ### 2. Đối tượng sử dụng
 * **Kỹ sư Quản trị Mạng và Hệ thống (Network & System Administrators):** Cần một giải pháp an ninh "cắm-và-chạy" (Plug-and-Play), có thể triển khai giám sát và bảo vệ các máy chủ Web (đặc biệt là các hệ thống Legacy không thể chỉnh sửa mã nguồn) mà không làm suy giảm hiệu năng hay gây gián đoạn đường truyền.

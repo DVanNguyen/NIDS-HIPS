@@ -76,7 +76,7 @@ def get_network_interfaces():
 class SOCDefenseGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("🛡️ TRUNG TÂM PHÒNG THỦ MẠNG SOC: NIDS & HIPS COUNTER-ATTACK CONTROLLER")
+        self.root.title("🛡️ HỆ THỐNG PHÁT HIỆN & NGĂN CHẶN XÂM NHẬP MẠNG ĐA TẦNG (NIDS & HIPS)")
         self.root.geometry("1180x820")
         self.root.minsize(1050, 720)
         self.root.configure(bg="#0f172a")
@@ -112,8 +112,8 @@ class SOCDefenseGUI:
 
         lbl_title = tk.Label(
             title_box,
-            text="🛡️ SOC DEFENSE CENTER - NIDS & HIPS PHÒNG THỦ CHỦ ĐỘNG",
-            font=("Segoe UI", 14, "bold"),
+            text="🛡️ HỆ THỐNG PHÁT HIỆN & NGĂN CHẶN XÂM NHẬP MẠNG ĐA TẦNG (NIDS & HIPS)",
+            font=("Segoe UI", 13, "bold"),
             fg="#38bdf8",
             bg="#1e293b"
         )
@@ -121,7 +121,7 @@ class SOCDefenseGUI:
 
         lbl_sub = tk.Label(
             title_box,
-            text="Giám sát L4/L7 DPI, Ngăn chặn Tường lửa & 4 Đòn Phản Công Tác Chiến",
+            text="Phân tích giao thức TCP/IP, HTTP theo mô hình Client–Server phân tán | 4 Đòn Phản Công",
             font=("Segoe UI", 9),
             fg="#94a3b8",
             bg="#1e293b"
