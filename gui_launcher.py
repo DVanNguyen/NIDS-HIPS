@@ -1,7 +1,7 @@
 """
 gui_launcher.py - Trung Tâm Điều Hành An Ninh Mạng (SOC Monitor & HIPS Counter-Attack Panel)
 Giao diện Desktop GUI Python Tkinter hoàn chỉnh dành cho Máy Nạn Nhân & Phòng Thủ:
-1. Giám sát lưu lượng thời gian thực (Biểu đồ Matplotlib PPS).
+1. Giám sát lưu lượng thời gian thực (Biểu đồ Matplotlib PPS thực tế từ Scapy).
 2. Bảng cảnh báo NIDS thời gian thực (Hiển thị DoS, SQLi, XSS, IP Attacker, Payload).
 3. MENU 4 ĐÒN PHẢN CÔNG HIPS TRỰC TIẾP TRÊN GIAO DIỆN:
    - Đòn 1: Chặn Firewall Windows (netsh advfirewall drop)
@@ -11,7 +11,6 @@ Giao diện Desktop GUI Python Tkinter hoàn chỉnh dành cho Máy Nạn Nhân 
 4. Tích hợp Ngrok Tunnel 1-Click: Mở cổng Internet công khai để Hội đồng dùng 4G/Wi-Fi riêng truy cập.
 """
 import sys
-import os
 import time
 import json
 import socket
@@ -21,7 +20,7 @@ import webbrowser
 import urllib.request
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, messagebox
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -44,41 +43,65 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 
+def _detect_primary_lan_ip() -> str:
+    """Tìm địa chỉ IPv4 LAN/Wi-Fi chính của máy chủ để nhập bên Máy Tấn Công"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
 def get_network_interfaces():
-    """Lấy danh sách các card mạng khả dụng kèm địa chỉ IP IPv4"""
-    ifaces_info = []
-    default_selection = ""
-    
+    """Lấy danh sách các card mạng IPv4 thực sự đang hoạt động (loại bỏ driver ảo rác)"""
+    primary_ip = _detect_primary_lan_ip()
+    all_label = f"🌐 Tất Cả Card Mạng (Khuyên dùng - IP chính: {primary_ip})"
+    ifaces_info = [("ALL", primary_ip, all_label)]
+
     if sys.platform == "win32":
         try:
             from scapy.arch.windows import get_windows_if_list
-            raw_list = get_windows_if_list()
-            for item in raw_list:
+            skip_tokens = (
+                "Npcap Packet Driver",
+                "Filter",
+                "Packet Scheduler",
+                "LightWeight",
+                "Light-Weight",
+                "Kernel Debugger",
+                "6to4",
+                "Teredo",
+                "IP-HTTPS",
+            )
+            for item in get_windows_if_list():
                 name = item.get("name", "Unknown")
-                ips = [ip for ip in item.get("ips", []) if not ip.startswith("fe80") and not ip.startswith("169.254") and ":" not in ip]
-                if any(x in name for x in ["Filter Driver", "Packet Scheduler", "LightWeight"]):
+                if any(tok in name for tok in skip_tokens):
                     continue
-                ip_str = ips[0] if ips else "N/A"
+                ips = [
+                    ip for ip in item.get("ips", [])
+                    if ":" not in ip and not ip.startswith(("fe80", "169.254"))
+                ]
+                if not ips:
+                    continue
+                ip_str = ips[0]
                 display_label = f"{name} (IP: {ip_str})"
                 ifaces_info.append((name, ip_str, display_label))
-                if not default_selection and ip_str != "N/A" and not ip_str.startswith("127."):
-                    default_selection = display_label
         except Exception:
             pass
 
-    if not ifaces_info:
-        ifaces_info = [("Wi-Fi", "127.0.0.1", "Wi-Fi (Default)"), ("Ethernet", "127.0.0.1", "Ethernet (Default)")]
-        default_selection = "Wi-Fi (Default)"
-        
-    return ifaces_info, default_selection
+    return ifaces_info, all_label
 
 
 class SOCDefenseGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("🛡️ HỆ THỐNG PHÁT HIỆN & NGĂN CHẶN XÂM NHẬP MẠNG ĐA TẦNG (NIDS & HIPS)")
-        self.root.geometry("1180x820")
-        self.root.minsize(1050, 720)
+        self.root.geometry("1200x840")
+        self.root.minsize(1060, 740)
         self.root.configure(bg="#0f172a")
 
         # Khởi tạo HIPS Guard Engine
@@ -89,18 +112,26 @@ class SOCDefenseGUI:
         self.ngrok_process = None
         self.ngrok_url = ""
 
-        # Biến trạng thái
+        # Biến trạng thái: Mặc định TẮT Auto-Block để trình diễn rõ Trước & Sau khi Phản đòn
         self.is_running = False
-        self.auto_defense_var = tk.BooleanVar(value=True)
+        self.auto_defense_var = tk.BooleanVar(value=False)
         self.selected_attacker_ip = tk.StringVar(value="")
 
         # Dữ liệu biểu đồ PPS
         self.pps_data = [0] * 35
-        self.current_pps = 0
+        self.alert_pps_boost = 0
 
         self.ifaces_info, self.default_iface = get_network_interfaces()
         self._build_ui()
         self._start_pps_clock()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _get_selected_server_url(self) -> str:
+        sel = self.iface_var.get()
+        for _, ip_str, label in self.ifaces_info:
+            if label == sel and ip_str and ip_str != "N/A":
+                return f"http://{ip_str}:8080"
+        return f"http://{_detect_primary_lan_ip()}:8080"
 
     def _build_ui(self):
         # 1. Header Bar
@@ -155,12 +186,13 @@ class SOCDefenseGUI:
         tk.Label(iface_frame, text="Card Mạng:", font=("Segoe UI", 9, "bold"), fg="#e2e8f0", bg="#1e293b").pack(side=tk.LEFT, padx=4)
         self.iface_var = tk.StringVar(value=self.default_iface)
         display_values = [item[2] for item in self.ifaces_info]
-        self.combo_iface = ttk.Combobox(iface_frame, textvariable=self.iface_var, values=display_values, width=32, state="readonly")
+        self.combo_iface = ttk.Combobox(iface_frame, textvariable=self.iface_var, values=display_values, width=40, state="readonly")
         self.combo_iface.pack(side=tk.LEFT, padx=4)
+        self.combo_iface.bind("<<ComboboxSelected>>", self._on_iface_changed)
 
         # Nút Start / Stop
         self.btn_start = tk.Button(
-            toolbar, text="▶ BẬT PHÒNG THỦ TOÀN DIỆN (1-CLICK)",
+            toolbar, text="▶ KHỞI CHẠY HỆ THỐNG (1-CLICK)",
             font=("Segoe UI", 10, "bold"), bg="#0284c7", fg="white",
             activebackground="#0369a1", activeforeground="white",
             relief=tk.FLAT, padx=12, pady=6, cursor="hand2", command=self.start_system
@@ -168,7 +200,7 @@ class SOCDefenseGUI:
         self.btn_start.pack(side=tk.LEFT, padx=5)
 
         self.btn_stop = tk.Button(
-            toolbar, text="⏹ DỪNG HỆ THỐNG",
+            toolbar, text="⏹ DỪNG",
             font=("Segoe UI", 10, "bold"), bg="#475569", fg="#94a3b8",
             relief=tk.FLAT, padx=10, pady=6, state=tk.DISABLED, cursor="hand2", command=self.stop_system
         )
@@ -196,24 +228,49 @@ class SOCDefenseGUI:
         )
         self.btn_reset.pack(side=tk.RIGHT, padx=10)
 
-        # Dải hiển thị Ngrok URL cho Hội Đồng
-        self.ngrok_bar = tk.Frame(self.root, bg="#064e3b")
+        # Dải hiển thị Địa chỉ IP LAN (cho Máy Tấn Công) & Ngrok URL (cho Hội Đồng)
+        info_strip = tk.Frame(self.root, bg="#0f172a")
+        info_strip.pack(fill=tk.X, padx=12, pady=(2, 6))
+
+        # Cột trái: IP LAN cho Máy Tấn Công
+        lan_bar = tk.Frame(info_strip, bg="#172554")
+        lan_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+        self.lbl_lan_ip = tk.Label(
+            lan_bar,
+            text=f"🎯 IP SERVER (Nhập bên Máy Tấn Công): {self._get_selected_server_url()}",
+            font=("Segoe UI", 9, "bold"),
+            fg="#93c5fd",
+            bg="#172554"
+        )
+        self.lbl_lan_ip.pack(side=tk.LEFT, padx=12, pady=6)
+
+        btn_copy_ip = tk.Button(
+            lan_bar, text="📋 Copy IP Server",
+            font=("Segoe UI", 8, "bold"), bg="#2563eb", fg="white",
+            relief=tk.FLAT, padx=8, pady=2, cursor="hand2", command=self.copy_server_ip
+        )
+        btn_copy_ip.pack(side=tk.RIGHT, padx=10, pady=4)
+
+        # Cột phải: Ngrok URL cho Hội Đồng
+        self.ngrok_bar = tk.Frame(info_strip, bg="#064e3b")
+        self.ngrok_bar.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(6, 0))
+
         self.lbl_ngrok_url = tk.Label(
             self.ngrok_bar,
-            text="🌐 LINK TRUY CẬP CHO HỘI ĐỒNG: Đang chờ kích hoạt Ngrok Tunnel...",
-            font=("Segoe UI", 10, "bold"),
+            text="🌐 LINK HỘI ĐỒNG (4G/Khác mạng): Chưa bật Ngrok Tunnel",
+            font=("Segoe UI", 9, "bold"),
             fg="#a7f3d0",
             bg="#064e3b"
         )
-        self.lbl_ngrok_url.pack(side=tk.LEFT, padx=15, pady=6)
+        self.lbl_ngrok_url.pack(side=tk.LEFT, padx=12, pady=6)
 
         self.btn_copy_ngrok = tk.Button(
-            self.ngrok_bar, text="📋 Copy Link Cho Thầy/Cô",
-            font=("Segoe UI", 9, "bold"), bg="#10b981", fg="black",
-            relief=tk.FLAT, padx=10, command=self.copy_ngrok_url
+            self.ngrok_bar, text="📋 Copy Link Hội Đồng",
+            font=("Segoe UI", 8, "bold"), bg="#10b981", fg="black",
+            relief=tk.FLAT, padx=8, pady=2, cursor="hand2", command=self.copy_ngrok_url
         )
-        self.btn_copy_ngrok.pack(side=tk.RIGHT, padx=15, pady=4)
-        self.ngrok_bar.pack(fill=tk.X, padx=12, pady=(2, 6))
+        self.btn_copy_ngrok.pack(side=tk.RIGHT, padx=10, pady=4)
 
         # 3. Main Split Area: (Upper: PPS Chart & HIPS Block List)
         upper_pane = tk.Frame(self.root, bg="#0f172a")
@@ -226,7 +283,7 @@ class SOCDefenseGUI:
         )
         chart_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
 
-        self.fig = Figure(figsize=(6.2, 2.5), dpi=90, facecolor="#1e293b")
+        self.fig = Figure(figsize=(6.2, 2.4), dpi=90, facecolor="#1e293b")
         self.ax = self.fig.add_subplot(111)
         self.ax.set_facecolor("#090d16")
         self.ax.tick_params(colors="#94a3b8", labelsize=8)
@@ -271,7 +328,7 @@ class SOCDefenseGUI:
         # 4. THANH ĐIỀU KHIỂN ĐÒN PHẢN CÔNG TRỰC TIẾP (COUNTER-ATTACK ACTIONS)
         counter_frame = tk.LabelFrame(
             self.root,
-            text=" ⚡ MENU LỰA CHỌN ĐÒN PHẢN CÔNG HIPS (CHỌN IP TỪ BẢNG CẢNH BÁO BÊN DƯỚI ĐỂ PHẢN ĐÒN) ",
+            text=" ⚡ MENU LỰA CHỌN ĐÒN PHẢN CÔNG HIPS (TỰ ĐỘNG NHẬN IP TỪ NIDS HOẶC CHỌN BÊN DƯỚI) ",
             font=("Segoe UI", 10, "bold"), fg="#fbbf24", bg="#1e293b"
         )
         counter_frame.pack(fill=tk.X, padx=12, pady=6)
@@ -281,44 +338,44 @@ class SOCDefenseGUI:
 
         tk.Label(c_bar, text="Mục tiêu phản đòn (IP):", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#1e293b").pack(side=tk.LEFT, padx=(0, 6))
         self.entry_target_ip = tk.Entry(c_bar, textvariable=self.selected_attacker_ip, font=("Consolas", 11, "bold"), width=16, bg="#090d16", fg="#38bdf8", insertbackground="white")
-        self.entry_target_ip.pack(side=tk.LEFT, padx=(0, 15))
+        self.entry_target_ip.pack(side=tk.LEFT, padx=(0, 12))
 
         # 4 Nút Phản Đòn
         btn_c1 = tk.Button(
             c_bar, text="⛔ [Đòn 1] Chặn Firewall (netsh)",
             font=("Segoe UI", 9, "bold"), bg="#dc2626", fg="white",
-            relief=tk.FLAT, padx=10, pady=4, cursor="hand2", command=self.action_block_firewall
+            relief=tk.FLAT, padx=9, pady=4, cursor="hand2", command=self.action_block_firewall
         )
-        btn_c1.pack(side=tk.LEFT, padx=4)
+        btn_c1.pack(side=tk.LEFT, padx=3)
 
         btn_c2 = tk.Button(
             c_bar, text="⚡ [Đòn 2] Bắn TCP RST (Kill Sockets)",
             font=("Segoe UI", 9, "bold"), bg="#b91c1c", fg="white",
-            relief=tk.FLAT, padx=10, pady=4, cursor="hand2", command=self.action_tcp_rst
+            relief=tk.FLAT, padx=9, pady=4, cursor="hand2", command=self.action_tcp_rst
         )
-        btn_c2.pack(side=tk.LEFT, padx=4)
+        btn_c2.pack(side=tk.LEFT, padx=3)
 
         btn_c3 = tk.Button(
             c_bar, text="🕸️ [Đòn 3] Phản đòn Tarpit (Treo Thread)",
             font=("Segoe UI", 9, "bold"), bg="#7c3aed", fg="white",
-            relief=tk.FLAT, padx=10, pady=4, cursor="hand2", command=self.action_tarpit
+            relief=tk.FLAT, padx=9, pady=4, cursor="hand2", command=self.action_tarpit
         )
-        btn_c3.pack(side=tk.LEFT, padx=4)
+        btn_c3.pack(side=tk.LEFT, padx=3)
 
         btn_c4 = tk.Button(
             c_bar, text="🍯 [Đòn 4] Đánh Lừa Honeypot (CSDL Ảo)",
             font=("Segoe UI", 9, "bold"), bg="#d97706", fg="white",
-            relief=tk.FLAT, padx=10, pady=4, cursor="hand2", command=self.action_honeypot
+            relief=tk.FLAT, padx=9, pady=4, cursor="hand2", command=self.action_honeypot
         )
-        btn_c4.pack(side=tk.LEFT, padx=4)
+        btn_c4.pack(side=tk.LEFT, padx=3)
 
-        # Checkbox Tự Động Phản Đòn
+        # Checkbox Tự Động Phản Đòn IPS
         cb_auto = tk.Checkbutton(
-            c_bar, text="Tự động Chặn khi phát hiện CRITICAL",
+            c_bar, text="Tự động Chặn IPS (Auto-Block)",
             variable=self.auto_defense_var, font=("Segoe UI", 9, "bold"),
             fg="#34d399", bg="#1e293b", selectcolor="#090d16", activebackground="#1e293b"
         )
-        cb_auto.pack(side=tk.RIGHT, padx=5)
+        cb_auto.pack(side=tk.RIGHT, padx=4)
 
         # 5. Bảng Cảnh Báo NIDS Thời Gian Thực (Live Alert Table)
         alert_box = tk.LabelFrame(
@@ -341,7 +398,6 @@ class SOCDefenseGUI:
         self.tree_alert.column("SrcIP", width=140, anchor="center")
         self.tree_alert.column("Details", width=580)
 
-        # Khi người dùng click vào dòng cảnh báo -> Tự động điền IP vào ô mục tiêu phản đòn!
         self.tree_alert.bind("<<TreeviewSelect>>", self._on_alert_row_selected)
 
         sb_alert = ttk.Scrollbar(alert_box, orient=tk.VERTICAL, command=self.tree_alert.yview)
@@ -349,11 +405,20 @@ class SOCDefenseGUI:
         self.tree_alert.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
         sb_alert.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _on_iface_changed(self, event=None):
+        self.lbl_lan_ip.config(text=f"🎯 IP SERVER (Nhập bên Máy Tấn Công): {self._get_selected_server_url()}")
+
+    def copy_server_ip(self):
+        srv_url = self._get_selected_server_url()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(srv_url)
+        messagebox.showinfo("Đã Sao Chép IP Server", f"Đã sao chép địa chỉ máy chủ nạn nhân:\n{srv_url}\n\nHãy dán vào ô Địa chỉ Mục tiêu bên Máy Tấn Công!")
+
     # ==========================================
     # CÁC HÀM XỬ LÝ SỰ KIỆN & KHỞI CHẠY HỆ THỐNG
     # ==========================================
     def start_system(self):
-        """Khởi chạy toàn bộ hệ thống Máy Nạn Nhân: Web Server + NIDS + HIPS"""
+        """Khởi chạy toàn bộ hệ thống Máy Nạn Nhân: Web Server + Mở Port Firewall + NIDS + HIPS"""
         if self.is_running:
             return
 
@@ -361,20 +426,25 @@ class SOCDefenseGUI:
         self.btn_start.config(state=tk.DISABLED, bg="#475569")
         self.btn_stop.config(state=tk.NORMAL, bg="#ef4444", fg="white")
 
-        # 1. Chạy Web Server (:8080)
-        def _server_task():
-            try:
-                run_web_server(8080)
-            except Exception as e:
-                print(f"[Server Error] {e}")
+        # Mở cổng 8080 Inbound trên Windows Firewall để Máy Tấn Công (LAN/Wi-Fi) kết nối thông suốt
+        self.hips.ensure_service_port_allowed(8080)
 
-        self.server_thread = threading.Thread(target=_server_task, daemon=True)
-        self.server_thread.start()
+        # 1. Chạy Web Server (:8080) nếu chưa khởi tạo
+        if not self.server_thread or not self.server_thread.is_alive():
+            def _server_task():
+                try:
+                    run_web_server(8080)
+                except Exception as e:
+                    print(f"[Server Error] {e}")
+
+            self.server_thread = threading.Thread(target=_server_task, daemon=True)
+            self.server_thread.start()
+
         self.badge_server.config(text="● SERVER: ONLINE (:8080)", fg="#34d399", bg="#064e3b")
 
         # 2. Khởi chạy NIDS Sensor
         selected_label = self.iface_var.get()
-        actual_iface = None
+        actual_iface = "ALL"
         for item in self.ifaces_info:
             if item[2] == selected_label:
                 actual_iface = item[0]
@@ -397,10 +467,18 @@ class SOCDefenseGUI:
         self.nids_thread.start()
         self.badge_nids.config(text="● NIDS: ĐANG QUÉT (DPI)", fg="#38bdf8", bg="#0c4a6e")
 
-        messagebox.showinfo("Thành Công", "Đã kích hoạt toàn bộ Hệ Thống Phòng Thủ Mạng (Web :8080 + NIDS + HIPS)!")
+        srv_url = self._get_selected_server_url()
+        messagebox.showinfo(
+            "Hệ Thống Sẵn Sàng",
+            f"Đã kích hoạt thành công Web Server + NIDS + HIPS!\n\n"
+            f"🎯 Địa chỉ nhập bên Máy Tấn Công:\n{srv_url}\n\n"
+            f"💡 Mẹo Demo:\n"
+            f"- Để Hội đồng thấy Web sập 503 / lộ SQLi / dính XSS trước: Giữ nguyên trạng thái chưa tích 'Tự động Chặn IPS'.\n"
+            f"- Khi NIDS báo động đỏ: Bấm chọn 1 trong 4 Đòn Phản Công (hoặc tích Tự động Chặn IPS) để chặn & phản công ngay!"
+        )
 
     def stop_system(self):
-        """Dừng hệ thống an toàn"""
+        """Dừng NIDS Sensor an toàn"""
         if not self.is_running:
             return
 
@@ -410,13 +488,11 @@ class SOCDefenseGUI:
 
         self.btn_start.config(state=tk.NORMAL, bg="#0284c7")
         self.btn_stop.config(state=tk.DISABLED, bg="#475569", fg="#94a3b8")
-        self.badge_server.config(text="● SERVER: DỪNG", fg="#94a3b8", bg="#334155")
         self.badge_nids.config(text="● NIDS: DỪNG", fg="#94a3b8", bg="#334155")
 
     def toggle_ngrok(self):
         """Bật / Tắt Ngrok Tunnel để Hội đồng truy cập không cần chung Wi-Fi"""
         if self.ngrok_process:
-            # Tắt Ngrok
             try:
                 self.ngrok_process.terminate()
             except Exception:
@@ -424,30 +500,32 @@ class SOCDefenseGUI:
             self.ngrok_process = None
             self.ngrok_url = ""
             self.badge_ngrok.config(text="● NGROK: TẮT", fg="#94a3b8", bg="#334155")
-            self.lbl_ngrok_url.config(text="🌐 LINK TRUY CẬP CHO HỘI ĐỒNG: Đã đóng Ngrok Tunnel.")
+            self.lbl_ngrok_url.config(text="🌐 LINK HỘI ĐỒNG (4G/Khác mạng): Đã đóng Ngrok Tunnel")
             self.btn_ngrok.config(text="🌐 BẬT NGROK CHO HỘI ĐỒNG (INTERNET)", bg="#059669")
             return
 
-        # Khởi động Ngrok
         def _launch_ngrok():
             try:
+                # Dùng DEVNULL để không bao giờ bị đầy bộ đệm Pipe khi dội tải lưu lượng lớn
                 self.ngrok_process = subprocess.Popen(
-                    ["ngrok", "http", "8080", "--log=stdout"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    ["ngrok", "http", "8080"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
                 )
-                # Đợi 2.5s để ngrok khởi tạo và gọi API local lấy public URL
-                time.sleep(2.5)
-                for _ in range(6):
+                time.sleep(2.0)
+                for _ in range(8):
                     try:
                         req = urllib.request.Request("http://127.0.0.1:4040/api/tunnels")
                         with urllib.request.urlopen(req, timeout=1.5) as resp:
                             data = json.loads(resp.read().decode())
                             tunnels = data.get("tunnels", [])
                             if tunnels:
-                                self.ngrok_url = tunnels[0].get("public_url", "")
-                                if self.ngrok_url:
+                                https_url = next(
+                                    (t.get("public_url", "") for t in tunnels if t.get("public_url", "").startswith("https://")),
+                                    tunnels[0].get("public_url", "")
+                                )
+                                if https_url:
+                                    self.ngrok_url = https_url
                                     break
                     except Exception:
                         time.sleep(1.0)
@@ -455,11 +533,10 @@ class SOCDefenseGUI:
                 if self.ngrok_url:
                     self.root.after(0, self._on_ngrok_ready)
                 else:
-                    self.root.after(0, lambda: messagebox.showwarning(
-                        "Ngrok Chú ý", "Ngrok đang chạy nhưng chưa lấy được URL tự động.\nBạn có thể mở http://127.0.0.1:4040 để xem URL!"
-                    ))
+                    self.root.after(0, self._on_ngrok_failed)
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Lỗi Ngrok", f"Không thể chạy ngrok: {e}"))
+                self.ngrok_process = None
+                self.root.after(0, lambda err=e: self._on_ngrok_error(err))
 
         threading.Thread(target=_launch_ngrok, daemon=True).start()
         self.btn_ngrok.config(text="⏳ Đang kết nối Ngrok...", bg="#d97706")
@@ -467,11 +544,22 @@ class SOCDefenseGUI:
     def _on_ngrok_ready(self):
         self.badge_ngrok.config(text="● NGROK: KẾT NỐI", fg="#34d399", bg="#064e3b")
         self.btn_ngrok.config(text="⏹ TẮT NGROK", bg="#dc2626")
-        self.lbl_ngrok_url.config(text=f"🌐 LINK CÔNG KHAI CHO HỘI ĐỒNG: {self.ngrok_url}")
+        self.lbl_ngrok_url.config(text=f"🌐 LINK HỘI ĐỒNG: {self.ngrok_url}")
         messagebox.showinfo(
             "Ngrok Sẵn Sàng Cho Hội Đồng",
-            f"Đã mở cổng Internet thành công!\n\nĐường dẫn cho Hội Đồng:\n{self.ngrok_url}\n\nThầy/Cô có thể dùng điện thoại/laptop 4G quét vào ngay!"
+            f"Đã mở cổng Internet thành công!\n\nĐường dẫn cho Hội Đồng:\n{self.ngrok_url}\n\nThầy/Cô dùng 4G hoặc Wi-Fi bất kỳ mở link trên đều vào được ngay!"
         )
+
+    def _on_ngrok_failed(self):
+        self.btn_ngrok.config(text="🌐 BẬT NGROK CHO HỘI ĐỒNG (INTERNET)", bg="#059669")
+        messagebox.showwarning(
+            "Ngrok Chú ý",
+            "Chưa lấy được Public URL từ Ngrok (kiểm tra kết nối Internet hoặc lệnh 'ngrok config add-authtoken').\nBạn cũng có thể kiểm tra tại http://127.0.0.1:4040"
+        )
+
+    def _on_ngrok_error(self, err):
+        self.btn_ngrok.config(text="🌐 BẬT NGROK CHO HỘI ĐỒNG (INTERNET)", bg="#059669")
+        messagebox.showerror("Lỗi Ngrok", f"Không thể chạy ngrok: {err}")
 
     def copy_ngrok_url(self):
         if self.ngrok_url:
@@ -482,7 +570,7 @@ class SOCDefenseGUI:
             messagebox.showwarning("Thông Báo", "Vui lòng bấm 'BẬT NGROK CHO HỘI ĐỒNG' trước!")
 
     def reset_server(self):
-        """Khôi phục trạng thái Web Server và gỡ toàn bộ Firewall"""
+        """Khôi phục trạng thái Web Server (xóa XSS, mở 503) và gỡ toàn bộ Firewall"""
         try:
             req = urllib.request.Request("http://127.0.0.1:8080/api/reset")
             with urllib.request.urlopen(req, timeout=2.0) as resp:
@@ -492,7 +580,7 @@ class SOCDefenseGUI:
 
         self.hips.cleanup_all_firewall_rules()
         self._refresh_policies_table()
-        messagebox.showinfo("Đã Reset", "Đã khôi phục trạng thái Web Server và dọn sạch các rule Firewall!")
+        messagebox.showinfo("Đã Reset", "Đã khôi phục Web Server (xóa mã độc XSS, gỡ quá tải 503) và dọn sạch các rule Firewall!")
 
     # ==========================================
     # TIẾP NHẬN CẢNH BÁO TỪ NIDS & ĐỒNG BỘ UI
@@ -502,8 +590,7 @@ class SOCDefenseGUI:
         self.root.after(0, self._insert_alert_row, alert)
 
     def _insert_alert_row(self, alert):
-        # Tăng chỉ số PPS để biểu đồ phản ánh lưu lượng tấn công
-        self.current_pps += 25
+        self.alert_pps_boost += 25
 
         t_str = alert.get("timestamp", time.strftime("%H:%M:%S"))
         sev = alert.get("severity", "WARNING")
@@ -511,15 +598,15 @@ class SOCDefenseGUI:
         src = alert.get("src_ip", "") or alert.get("attacker_ip", "")
         ev = alert.get("evidence", "") or alert.get("details", "")
 
-        item_id = self.tree_alert.insert("", 0, values=(t_str, sev, att, src, ev))
+        self.tree_alert.insert("", 0, values=(t_str, sev, att, src, ev))
 
         # Tự động chọn IP tấn công vào ô mục tiêu phản đòn
         if src:
             self.selected_attacker_ip.set(src)
 
-        # Nếu đang bật chế độ Tự động phản đòn: Kích hoạt đòn Firewall ngay!
-        if self.auto_defense_var.get() and sev == "CRITICAL" and src:
-            ok, msg = self.hips.block_firewall(src, reason=att)
+        # Nếu người dùng tích chế độ Tự động Chặn IPS: Chặn ngay lập tức!
+        if self.auto_defense_var.get() and sev in ("CRITICAL", "WARNING") and src:
+            self.hips.block_firewall(src, reason=att)
             self._refresh_policies_table()
 
     def _on_alert_row_selected(self, event):
@@ -527,7 +614,7 @@ class SOCDefenseGUI:
         if sel:
             values = self.tree_alert.item(sel[0])["values"]
             if len(values) >= 4:
-                src_ip = values[3]
+                src_ip = str(values[3])
                 self.selected_attacker_ip.set(src_ip)
 
     # ==========================================
@@ -541,7 +628,7 @@ class SOCDefenseGUI:
             return
         ok, msg = self.hips.block_firewall(ip, reason="Phản đòn Firewall do người dùng chọn")
         self._refresh_policies_table()
-        messagebox.showinfo("Kết Quả Phản Đòn 1", msg)
+        messagebox.showinfo("Kết Quả Phản Đòn 1 (Firewall Drop)", msg)
 
     def action_tcp_rst(self):
         """Đòn 2: Bắn gói TCP RST (Kill Sockets Attacker)"""
@@ -579,7 +666,7 @@ class SOCDefenseGUI:
         if not sel:
             messagebox.showwarning("Chú ý", "Vui lòng chọn dòng IP trong bảng HIPS Actions để gỡ bỏ!")
             return
-        target_ip = self.tree_policy.item(sel[0])["values"][0]
+        target_ip = str(self.tree_policy.item(sel[0])["values"][0])
         ok, msg = self.hips.unblock_ip(target_ip)
         self._refresh_policies_table()
         messagebox.showinfo("Đã Gỡ Bỏ", msg)
@@ -598,15 +685,13 @@ class SOCDefenseGUI:
     # ==========================================
     def _start_pps_clock(self):
         def _tick():
-            # Giảm dần PPS tự nhiên nếu không có dội tải mới
-            val = max(self.current_pps, 2 if self.is_running else 0)
+            real_pps = self.nids.pop_pps_count() if (self.is_running and self.nids) else 0
+            val = max(real_pps, self.alert_pps_boost, 1 if self.is_running else 0)
             self.pps_data.append(val)
             self.pps_data.pop(0)
 
-            # Hạ tải từ từ
-            self.current_pps = max(0, int(self.current_pps * 0.4))
+            self.alert_pps_boost = max(0, int(self.alert_pps_boost * 0.35))
 
-            # Cập nhật Matplotlib
             self.line.set_ydata(self.pps_data)
             max_y = max(max(self.pps_data) + 15, 60)
             self.ax.set_ylim(0, max_y)
@@ -615,6 +700,17 @@ class SOCDefenseGUI:
             self.root.after(1000, _tick)
 
         self.root.after(1000, _tick)
+
+    def _on_close(self):
+        try:
+            if self.nids:
+                self.nids.stop()
+            if self.ngrok_process:
+                self.ngrok_process.terminate()
+            self.hips.cleanup_all_firewall_rules()
+        except Exception:
+            pass
+        self.root.destroy()
 
 
 def launch_soc_gui():
